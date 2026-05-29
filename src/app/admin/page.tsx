@@ -26,6 +26,8 @@ type N8nConfig = {
   enabled: boolean
 }
 
+type AdminTab = 'overview' | 'users' | 'report' | 'n8n'
+
 const defaultN8nConfig: N8nConfig = {
   webhookUrl: process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || '',
   testWebhookUrl: '',
@@ -42,13 +44,25 @@ function avatarColor(name: string) {
   return colors[name.charCodeAt(0) % colors.length]
 }
 
+function getAdminTitle(tab: AdminTab) {
+  if (tab === 'overview') return 'Company Overview'
+  if (tab === 'users') return 'Manage Users'
+  if (tab === 'n8n') return 'n8n Configuration'
+  return 'Daily Report'
+}
+
+function isSuccessMessage(message: string) {
+  const lower = message.toLowerCase()
+  return lower.includes('success') || lower.includes('saved')
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null)
   const [users, setUsers] = useState<Profile[]>([])
   const [allJobs, setAllJobs] = useState<Job[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'report'>('overview')
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview')
   const [reportDate, setReportDate] = useState(todayISO())
   const [sendingReport, setSendingReport] = useState(false)
   const [reportMessage, setReportMessage] = useState('')
@@ -105,7 +119,11 @@ export default function AdminPage() {
   const loadN8nConfig = useCallback(async () => {
     const storedConfig = window.localStorage.getItem(n8nStorageKey)
     if (storedConfig) {
-      setN8nConfig({ ...defaultN8nConfig, ...JSON.parse(storedConfig) })
+      try {
+        setN8nConfig({ ...defaultN8nConfig, ...JSON.parse(storedConfig) })
+      } catch {
+        window.localStorage.removeItem(n8nStorageKey)
+      }
     }
 
     const { data, error } = await supabase
@@ -230,7 +248,8 @@ export default function AdminPage() {
       }, { onConflict: 'key' })
 
     if (error) {
-      setN8nConfigMessage('Saved in this browser. Run the updated Supabase setup SQL to save it for everyone.')
+      setN8nConfig(cleanConfig)
+      setN8nConfigMessage('n8n configuration saved in this browser.')
     } else {
       setN8nConfig(cleanConfig)
       setN8nConfigMessage('n8n configuration saved.')
@@ -353,6 +372,7 @@ export default function AdminPage() {
             { key: 'overview', label: 'Overview' },
             { key: 'users', label: 'Manage Users' },
             { key: 'report', label: 'Daily Report' },
+            { key: 'n8n', label: 'n8n Configuration' },
           ].map((item) => (
             <button
               key={item.key}
@@ -372,7 +392,7 @@ export default function AdminPage() {
       <main className="main-content">
         <header className="topbar">
           <div>
-            <h1>{activeTab === 'overview' ? 'Company Overview' : activeTab === 'users' ? 'Manage Users' : 'Daily Report'}</h1>
+            <h1>{getAdminTitle(activeTab)}</h1>
             <p>{longDisplayDate(reportDate)}</p>
           </div>
           <div className="toolbar-row">
@@ -469,7 +489,7 @@ export default function AdminPage() {
             </section>
           )}
 
-          {activeTab === 'report' && (
+          {activeTab === 'n8n' && (
             <section className="narrow-panel wide">
               <div className="glass-card form-card">
                 <h2 className="section-title">n8n Configuration</h2>
@@ -558,9 +578,13 @@ export default function AdminPage() {
                     </button>
                   </div>
                 </form>
-                {n8nConfigMessage && <div className={`alert ${n8nConfigMessage.includes('success') || n8nConfigMessage.includes('saved') ? 'success' : 'error'}`}>{n8nConfigMessage}</div>}
+                {n8nConfigMessage && <div className={`alert ${isSuccessMessage(n8nConfigMessage) ? 'success' : 'error'}`}>{n8nConfigMessage}</div>}
               </div>
+            </section>
+          )}
 
+          {activeTab === 'report' && (
+            <section className="narrow-panel wide">
               <div className="glass-card form-card">
                 <h2 className="section-title">Report to Boss</h2>
                 <p className="muted-text">This report includes each user separately, today&apos;s new jobs, today&apos;s follow-ups, collections, and balances to carry into tomorrow.</p>

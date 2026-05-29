@@ -107,6 +107,8 @@ function buildGetPayload(payload: unknown) {
     type: stringValue(payload.type, 'daily_report'),
     date: stringValue(payload.date, new Date().toISOString().slice(0, 10)),
     summary: JSON.stringify(payload.summary || {}),
+    users: JSON.stringify(payload.users || []),
+    reportText: stringValue(payload.reportText, ''),
     delivery: JSON.stringify(payload.delivery || {}),
     sentAt: new Date().toISOString(),
   }

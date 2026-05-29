@@ -6,9 +6,13 @@
 create table if not exists public.profiles (
   id uuid references auth.users(id) on delete cascade primary key,
   username text unique not null,
+  email text,
   role text not null default 'user' check (role in ('admin', 'user')),
   created_at timestamptz not null default timezone('utc'::text, now())
 );
+
+alter table public.profiles
+  add column if not exists email text;
 
 create table if not exists public.jobs (
   id uuid primary key default gen_random_uuid(),
@@ -72,14 +76,16 @@ declare
 begin
   user_name := coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1));
 
-  insert into public.profiles (id, username, role)
+  insert into public.profiles (id, username, email, role)
   values (
     new.id,
     user_name,
+    new.email,
     case when user_name = 'admin' then 'admin' else 'user' end
   )
   on conflict (id) do update
     set username = excluded.username,
+        email = new.email,
         role = case when excluded.username = 'admin' then 'admin' else public.profiles.role end;
 
   return new;

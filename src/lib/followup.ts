@@ -3,6 +3,7 @@ export type JobStatus = 'Positive' | 'Negative' | 'Pending'
 export type Profile = {
   id: string
   username: string
+  email?: string | null
   role: 'admin' | 'user'
   created_at?: string
 }

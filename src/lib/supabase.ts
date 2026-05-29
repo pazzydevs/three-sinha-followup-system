@@ -12,17 +12,20 @@ export type Database = {
         Row: {
           id: string
           username: string
+          email: string | null
           role: 'admin' | 'user'
           created_at: string
         }
         Insert: {
           id: string
           username: string
+          email?: string | null
           role?: 'admin' | 'user'
           created_at?: string
         }
         Update: {
           username?: string
+          email?: string | null
           role?: 'admin' | 'user'
         }
       }

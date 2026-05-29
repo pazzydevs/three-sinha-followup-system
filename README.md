@@ -5,7 +5,7 @@ Next.js app for daily job entry, user-level follow-up dashboards, admin reportin
 ## Main Flow
 
 - Staff users log in and manage only their own jobs.
-- Admin sees all staff summaries and can add users.
+- Admin sees all staff summaries and can add, edit, delete, and reset staff credentials.
 - Daily report separates new jobs, collections, follow-ups, opening carry-forward, and closing carry-forward per user.
 - Manual report sending posts to the configured n8n webhook through the app server.
 - Admin can save the n8n production URL, test URL, HTTP method, boss email, workflow name, and delivery status from the Daily Report page.

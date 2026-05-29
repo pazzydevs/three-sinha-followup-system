@@ -68,10 +68,16 @@ export default function AdminPage() {
   const [reportMessage, setReportMessage] = useState('')
   const [reportPreview, setReportPreview] = useState('')
   const [showAddUser, setShowAddUser] = useState(false)
-  const [newUser, setNewUser] = useState({ username: '', password: '' })
+  const [newUser, setNewUser] = useState({ username: '', email: '', password: '' })
   const [addingUser, setAddingUser] = useState(false)
   const [addUserError, setAddUserError] = useState('')
   const [addUserSuccess, setAddUserSuccess] = useState('')
+  const [editingUser, setEditingUser] = useState<Profile | null>(null)
+  const [editUserForm, setEditUserForm] = useState({ username: '', email: '', password: '' })
+  const [updatingUser, setUpdatingUser] = useState(false)
+  const [userActionError, setUserActionError] = useState('')
+  const [userActionSuccess, setUserActionSuccess] = useState('')
+  const [deleteUserId, setDeleteUserId] = useState<string | null>(null)
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
   const [n8nConfig, setN8nConfig] = useState<N8nConfig>(defaultN8nConfig)
   const [savingN8nConfig, setSavingN8nConfig] = useState(false)
@@ -304,10 +310,12 @@ export default function AdminPage() {
     setAddingUser(true)
     setAddUserError('')
     setAddUserSuccess('')
+    setUserActionError('')
+    setUserActionSuccess('')
 
     try {
       const trimmedUsername = newUser.username.trim().toLowerCase()
-      const email = trimmedUsername.includes('@') ? trimmedUsername : `${trimmedUsername}@three-sinha.com`
+      const email = newUser.email.trim().toLowerCase() || `${trimmedUsername}@three-sinha.com`
       const { data: session } = await supabase.auth.getSession()
 
       const response = await fetch('/api/create-user', {
@@ -326,12 +334,89 @@ export default function AdminPage() {
       }
 
       setAddUserSuccess(`User "${trimmedUsername}" created successfully.`)
-      setNewUser({ username: '', password: '' })
+      setNewUser({ username: '', email: '', password: '' })
       await loadData()
     } catch {
       setAddUserError('Something went wrong while creating the user.')
     } finally {
       setAddingUser(false)
+    }
+  }
+
+  const openEditUser = (user: Profile) => {
+    setEditingUser(user)
+    setEditUserForm({
+      username: user.username,
+      email: user.email || `${user.username}@three-sinha.com`,
+      password: '',
+    })
+    setUserActionError('')
+    setUserActionSuccess('')
+  }
+
+  const handleUpdateUser = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!editingUser) return
+
+    setUpdatingUser(true)
+    setUserActionError('')
+    setUserActionSuccess('')
+
+    try {
+      const { data: session } = await supabase.auth.getSession()
+      const response = await fetch(`/api/users/${editingUser.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.session?.access_token || ''}`,
+        },
+        body: JSON.stringify(editUserForm),
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        setUserActionError(data.error || 'Failed to update user.')
+        return
+      }
+
+      setUserActionSuccess(`User "${editUserForm.username}" updated successfully.`)
+      setEditingUser(null)
+      setEditUserForm({ username: '', email: '', password: '' })
+      await loadData()
+    } catch {
+      setUserActionError('Something went wrong while updating the user.')
+    } finally {
+      setUpdatingUser(false)
+    }
+  }
+
+  const handleDeleteUser = async (userId: string) => {
+    setUserActionError('')
+    setUserActionSuccess('')
+
+    try {
+      const { data: session } = await supabase.auth.getSession()
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session.session?.access_token || ''}`,
+        },
+      })
+      const data = await response.json()
+
+      if (!response.ok) {
+        setUserActionError(data.error || 'Failed to delete user.')
+        return
+      }
+
+      setUserActionSuccess('User deleted successfully.')
+      setDeleteUserId(null)
+      if (editingUser?.id === userId) {
+        setEditingUser(null)
+      }
+      await loadData()
+    } catch {
+      setUserActionError('Something went wrong while deleting the user.')
     }
   }
 
@@ -432,15 +517,20 @@ export default function AdminPage() {
                 <button className="btn-primary" onClick={() => setShowAddUser(true)}>Add User</button>
               </div>
 
+              {userActionError && <div className="alert error">{userActionError}</div>}
+              {userActionSuccess && <div className="alert success">{userActionSuccess}</div>}
+
               <div className="glass-card table-card">
                 <table className="data-table">
                   <thead>
                     <tr>
                       <th>Username</th>
+                      <th>Email</th>
                       <th>Jobs Today</th>
                       <th>Expected</th>
                       <th>Collected</th>
                       <th>Carry Forward</th>
+                      <th>Credentials</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -454,10 +544,24 @@ export default function AdminPage() {
                             <span>{summary.profile.username}</span>
                           </div>
                         </td>
+                        <td>{summary.profile.email || `${summary.profile.username}@three-sinha.com`}</td>
                         <td>{summary.totalJobsToday}</td>
                         <td className="amount">Rs. {formatMoney(summary.expectedToday)}</td>
                         <td className="amount success-text">Rs. {formatMoney(summary.collectedToday)}</td>
                         <td className="amount danger-text">Rs. {formatMoney(summary.closingCarryForward)}</td>
+                        <td>
+                          <div className="button-row compact">
+                            <button className="btn-secondary icon-btn" onClick={() => openEditUser(summary.profile)}>Edit</button>
+                            {deleteUserId === summary.profile.id ? (
+                              <>
+                                <button className="btn-danger icon-btn" onClick={() => handleDeleteUser(summary.profile.id)}>Yes</button>
+                                <button className="btn-secondary icon-btn" onClick={() => setDeleteUserId(null)}>No</button>
+                              </>
+                            ) : (
+                              <button className="btn-danger icon-btn" onClick={() => setDeleteUserId(summary.profile.id)}>Delete</button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -476,6 +580,10 @@ export default function AdminPage() {
                         <input className="form-input" value={newUser.username} onChange={(event) => setNewUser({ ...newUser, username: event.target.value })} required />
                       </div>
                       <div>
+                        <label className="form-label">Email</label>
+                        <input className="form-input" type="email" value={newUser.email} onChange={(event) => setNewUser({ ...newUser, email: event.target.value })} placeholder="Auto-created from username if blank" />
+                      </div>
+                      <div>
                         <label className="form-label">Password</label>
                         <input className="form-input" type="password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} required minLength={6} />
                       </div>
@@ -483,6 +591,35 @@ export default function AdminPage() {
                     <div className="button-row">
                       <button className="btn-primary" disabled={addingUser}>{addingUser ? 'Creating...' : 'Create User'}</button>
                       <button className="btn-secondary" type="button" onClick={() => setShowAddUser(false)}>Cancel</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {editingUser && (
+                <div className="glass-card form-card">
+                  <div className="section-header">
+                    <h3>Edit Staff Credentials</h3>
+                    <button className="btn-secondary" type="button" onClick={() => setEditingUser(null)}>Close</button>
+                  </div>
+                  <form onSubmit={handleUpdateUser}>
+                    <div className="grid-2">
+                      <div>
+                        <label className="form-label">Username</label>
+                        <input className="form-input" value={editUserForm.username} onChange={(event) => setEditUserForm({ ...editUserForm, username: event.target.value })} required />
+                      </div>
+                      <div>
+                        <label className="form-label">Email</label>
+                        <input className="form-input" type="email" value={editUserForm.email} onChange={(event) => setEditUserForm({ ...editUserForm, email: event.target.value })} required />
+                      </div>
+                      <div>
+                        <label className="form-label">New Password</label>
+                        <input className="form-input" type="password" value={editUserForm.password} onChange={(event) => setEditUserForm({ ...editUserForm, password: event.target.value })} placeholder="Leave blank to keep current password" minLength={6} />
+                      </div>
+                    </div>
+                    <div className="button-row">
+                      <button className="btn-primary" disabled={updatingUser}>{updatingUser ? 'Updating...' : 'Update Credentials'}</button>
+                      <button className="btn-secondary" type="button" onClick={() => setEditingUser(null)}>Cancel</button>
                     </div>
                   </form>
                 </div>

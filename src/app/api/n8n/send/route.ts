@@ -17,10 +17,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing admin session.' }, { status: 401 })
     }
 
-    const { webhookUrl, payload } = await req.json()
+    const { webhookUrl, payload, method = 'POST' } = await req.json()
+    const httpMethod = normalizeMethod(method)
 
     if (!isValidWebhookUrl(webhookUrl)) {
       return NextResponse.json({ error: 'Invalid n8n webhook URL.' }, { status: 400 })
+    }
+
+    if (!httpMethod) {
+      return NextResponse.json({ error: 'Invalid n8n HTTP method.' }, { status: 400 })
     }
 
     const supabaseUser = createClient(supabaseUrl, anonKey, {
@@ -43,11 +48,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Only admins can send n8n webhooks.' }, { status: 403 })
     }
 
-    const webhookResponse = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    const webhookResponse = await sendWebhook(webhookUrl, httpMethod, payload)
 
     if (!webhookResponse.ok) {
       return NextResponse.json({ error: `n8n returned status ${webhookResponse.status}` }, { status: 502 })
@@ -58,6 +59,30 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : 'Failed to send n8n webhook.'
     return NextResponse.json({ error: message }, { status: 500 })
   }
+}
+
+function normalizeMethod(value: unknown): 'GET' | 'POST' | null {
+  if (value === 'GET' || value === 'POST') return value
+  if (typeof value !== 'string') return null
+
+  const upper = value.toUpperCase()
+  return upper === 'GET' || upper === 'POST' ? upper : null
+}
+
+function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknown) {
+  if (method === 'GET') {
+    const url = new URL(webhookUrl)
+    url.searchParams.set('source', 'three-sinha-followup-system')
+    url.searchParams.set('payload', JSON.stringify(payload))
+
+    return fetch(url, { method: 'GET' })
+  }
+
+  return fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 function isValidWebhookUrl(value: unknown): value is string {

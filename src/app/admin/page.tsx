@@ -19,6 +19,8 @@ import {
 
 type N8nConfig = {
   webhookUrl: string
+  testWebhookUrl: string
+  httpMethod: 'GET' | 'POST'
   emailTo: string
   workflowName: string
   enabled: boolean
@@ -26,6 +28,8 @@ type N8nConfig = {
 
 const defaultN8nConfig: N8nConfig = {
   webhookUrl: process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || '',
+  testWebhookUrl: '',
+  httpMethod: 'POST',
   emailTo: '',
   workflowName: 'Daily Follow-up Report',
   enabled: true,
@@ -174,6 +178,7 @@ export default function AdminPage() {
         },
         body: JSON.stringify({
           webhookUrl,
+          method: n8nConfig.httpMethod,
           payload: {
             ...payload,
             delivery: {
@@ -209,6 +214,7 @@ export default function AdminPage() {
     const cleanConfig = {
       ...n8nConfig,
       webhookUrl: n8nConfig.webhookUrl.trim(),
+      testWebhookUrl: n8nConfig.testWebhookUrl.trim(),
       emailTo: n8nConfig.emailTo.trim(),
       workflowName: n8nConfig.workflowName.trim() || 'Daily Follow-up Report',
     }
@@ -234,7 +240,7 @@ export default function AdminPage() {
   }
 
   const handleTestN8nWebhook = async () => {
-    const webhookUrl = n8nConfig.webhookUrl.trim()
+    const webhookUrl = (n8nConfig.testWebhookUrl || n8nConfig.webhookUrl).trim()
     setTestingN8n(true)
     setN8nConfigMessage('')
 
@@ -254,6 +260,7 @@ export default function AdminPage() {
         },
         body: JSON.stringify({
           webhookUrl,
+          method: n8nConfig.httpMethod,
           payload: {
             type: 'n8n_configuration_test',
             source: 'three-sinha-followup-system',
@@ -469,7 +476,7 @@ export default function AdminPage() {
                 <form onSubmit={handleSaveN8nConfig}>
                   <div className="grid-2">
                     <div>
-                      <label className="form-label">Webhook URL</label>
+                      <label className="form-label">Production Webhook URL</label>
                       <input
                         className="form-input"
                         type="url"
@@ -477,6 +484,27 @@ export default function AdminPage() {
                         onChange={(event) => setN8nConfig({ ...n8nConfig, webhookUrl: event.target.value })}
                         placeholder="https://n8n.example.com/webhook/..."
                       />
+                    </div>
+                    <div>
+                      <label className="form-label">Test Webhook URL</label>
+                      <input
+                        className="form-input"
+                        type="url"
+                        value={n8nConfig.testWebhookUrl}
+                        onChange={(event) => setN8nConfig({ ...n8nConfig, testWebhookUrl: event.target.value })}
+                        placeholder="https://n8n.example.com/webhook-test/..."
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">HTTP Method</label>
+                      <select
+                        className="form-input"
+                        value={n8nConfig.httpMethod}
+                        onChange={(event) => setN8nConfig({ ...n8nConfig, httpMethod: event.target.value as 'GET' | 'POST' })}
+                      >
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                      </select>
                     </div>
                     <div>
                       <label className="form-label">Boss Email</label>
@@ -509,11 +537,11 @@ export default function AdminPage() {
                   <div className="n8n-config-notes">
                     <div>
                       <span>Method</span>
-                      <strong>POST</strong>
+                      <strong>{n8nConfig.httpMethod}</strong>
                     </div>
                     <div>
-                      <span>Payload</span>
-                      <strong>JSON daily report</strong>
+                      <span>Test Target</span>
+                      <strong>{n8nConfig.testWebhookUrl ? 'Test URL' : 'Production URL'}</strong>
                     </div>
                     <div>
                       <span>Schedule</span>

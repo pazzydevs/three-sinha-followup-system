@@ -42,6 +42,7 @@ async function sendDailyReport(req: NextRequest) {
   const webhookUrl = typeof n8nConfig.webhookUrl === 'string' && n8nConfig.webhookUrl.trim()
     ? n8nConfig.webhookUrl.trim()
     : fallbackWebhookUrl
+  const httpMethod = n8nConfig.httpMethod === 'GET' ? 'GET' : 'POST'
   const deliveryEnabled = typeof n8nConfig.enabled === 'boolean' ? n8nConfig.enabled : true
 
   if (!deliveryEnabled) {
@@ -71,17 +72,14 @@ async function sendDailyReport(req: NextRequest) {
     reportDate,
   )
   const payload = buildReportPayload(summaries, reportDate)
-  const webhookResponse = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...payload,
-      delivery: {
-        emailTo: typeof n8nConfig.emailTo === 'string' ? n8nConfig.emailTo : '',
-        workflowName: typeof n8nConfig.workflowName === 'string' ? n8nConfig.workflowName : 'Daily Follow-up Report',
-      },
-    }),
-  })
+  const webhookPayload = {
+    ...payload,
+    delivery: {
+      emailTo: typeof n8nConfig.emailTo === 'string' ? n8nConfig.emailTo : '',
+      workflowName: typeof n8nConfig.workflowName === 'string' ? n8nConfig.workflowName : 'Daily Follow-up Report',
+    },
+  }
+  const webhookResponse = await sendWebhook(webhookUrl, httpMethod, webhookPayload)
 
   if (!webhookResponse.ok) {
     return NextResponse.json({ error: `n8n returned status ${webhookResponse.status}` }, { status: 502 })
@@ -92,6 +90,22 @@ async function sendDailyReport(req: NextRequest) {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknown) {
+  if (method === 'GET') {
+    const url = new URL(webhookUrl)
+    url.searchParams.set('source', 'three-sinha-followup-system')
+    url.searchParams.set('payload', JSON.stringify(payload))
+
+    return fetch(url, { method: 'GET' })
+  }
+
+  return fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 function sriLankaToday() {

@@ -180,10 +180,11 @@ export default function AdminPage() {
 
     try {
       const payload = buildReportPayload(summaries, reportDate)
-      const webhookUrl = n8nConfig.webhookUrl.trim()
+      const webhookUrl = (n8nConfig.webhookUrl || n8nConfig.testWebhookUrl).trim()
+      const usingTestUrl = !n8nConfig.webhookUrl.trim() && Boolean(n8nConfig.testWebhookUrl.trim())
 
       if (!webhookUrl) {
-        setReportMessage('n8n webhook URL is not configured.')
+        setReportMessage('Add a production or test n8n webhook URL first.')
         return
       }
 
@@ -214,7 +215,7 @@ export default function AdminPage() {
       }
 
       setReportPreview(payload.reportText)
-      setReportMessage('Report sent to n8n successfully.')
+      setReportMessage(usingTestUrl ? 'Report sent to n8n test webhook successfully.' : 'Report sent to n8n successfully.')
     } catch {
       setReportMessage('Report send failed. Please check the network and webhook.')
     } finally {
@@ -550,7 +551,7 @@ export default function AdminPage() {
                         checked={n8nConfig.enabled}
                         onChange={(event) => setN8nConfig({ ...n8nConfig, enabled: event.target.checked })}
                       />
-                      <span>Enable daily report delivery</span>
+                      <span>Enable automatic daily delivery</span>
                     </label>
                   </div>
 
@@ -591,7 +592,7 @@ export default function AdminPage() {
                 <CompanyStats totals={companyTotals} compact />
                 <div className="button-row">
                   <button className="btn-secondary" onClick={handlePreviewReport}>Preview Report</button>
-                  <button className="btn-success" onClick={handleSendReport} disabled={sendingReport || !n8nConfig.enabled}>
+                  <button className="btn-success" onClick={handleSendReport} disabled={sendingReport}>
                     {sendingReport ? 'Sending...' : 'Send to n8n'}
                   </button>
                 </div>

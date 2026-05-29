@@ -51,6 +51,12 @@ export async function POST(req: NextRequest) {
     const webhookResponse = await sendWebhook(webhookUrl, httpMethod, payload)
 
     if (!webhookResponse.ok) {
+      if (webhookResponse.status === 404) {
+        return NextResponse.json({
+          error: 'n8n returned 404. Click "Listen for test event" in n8n and use the /webhook-test URL, or activate the workflow and use the /webhook production URL.',
+        }, { status: 502 })
+      }
+
       return NextResponse.json({ error: `n8n returned status ${webhookResponse.status}` }, { status: 502 })
     }
 
@@ -72,8 +78,11 @@ function normalizeMethod(value: unknown): 'GET' | 'POST' | null {
 function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknown) {
   if (method === 'GET') {
     const url = new URL(webhookUrl)
-    url.searchParams.set('source', 'three-sinha-followup-system')
-    url.searchParams.set('payload', JSON.stringify(payload))
+    const getPayload = buildGetPayload(payload)
+
+    Object.entries(getPayload).forEach(([key, value]) => {
+      url.searchParams.set(key, value)
+    })
 
     return fetch(url, { method: 'GET' })
   }
@@ -83,6 +92,32 @@ function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknow
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
+
+function buildGetPayload(payload: unknown) {
+  if (!isRecord(payload)) {
+    return {
+      source: 'three-sinha-followup-system',
+      payload: JSON.stringify(payload),
+    }
+  }
+
+  return {
+    source: 'three-sinha-followup-system',
+    type: stringValue(payload.type, 'daily_report'),
+    date: stringValue(payload.date, new Date().toISOString().slice(0, 10)),
+    summary: JSON.stringify(payload.summary || {}),
+    delivery: JSON.stringify(payload.delivery || {}),
+    sentAt: new Date().toISOString(),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function stringValue(value: unknown, fallback: string) {
+  return typeof value === 'string' && value ? value : fallback
 }
 
 function isValidWebhookUrl(value: unknown): value is string {

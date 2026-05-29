@@ -82,6 +82,12 @@ async function sendDailyReport(req: NextRequest) {
   const webhookResponse = await sendWebhook(webhookUrl, httpMethod, webhookPayload)
 
   if (!webhookResponse.ok) {
+    if (webhookResponse.status === 404) {
+      return NextResponse.json({
+        error: 'n8n returned 404. Activate the n8n workflow for the production webhook URL before scheduled reports can run.',
+      }, { status: 502 })
+    }
+
     return NextResponse.json({ error: `n8n returned status ${webhookResponse.status}` }, { status: 502 })
   }
 
@@ -95,8 +101,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknown) {
   if (method === 'GET') {
     const url = new URL(webhookUrl)
-    url.searchParams.set('source', 'three-sinha-followup-system')
-    url.searchParams.set('payload', JSON.stringify(payload))
+    const getPayload = buildGetPayload(payload)
+
+    Object.entries(getPayload).forEach(([key, value]) => {
+      url.searchParams.set(key, value)
+    })
 
     return fetch(url, { method: 'GET' })
   }
@@ -106,6 +115,28 @@ function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknow
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
+
+function buildGetPayload(payload: unknown) {
+  if (!isObject(payload)) {
+    return {
+      source: 'three-sinha-followup-system',
+      payload: JSON.stringify(payload),
+    }
+  }
+
+  return {
+    source: 'three-sinha-followup-system',
+    type: 'daily_report',
+    date: stringValue(payload.date, new Date().toISOString().slice(0, 10)),
+    summary: JSON.stringify(payload.summary || {}),
+    delivery: JSON.stringify(payload.delivery || {}),
+    sentAt: new Date().toISOString(),
+  }
+}
+
+function stringValue(value: unknown, fallback: string) {
+  return typeof value === 'string' && value ? value : fallback
 }
 
 function sriLankaToday() {

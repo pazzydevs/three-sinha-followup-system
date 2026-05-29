@@ -34,6 +34,13 @@ create index if not exists jobs_user_date_idx on public.jobs (user_id, date desc
 create index if not exists jobs_received_date_idx on public.jobs (received_date);
 create index if not exists jobs_follow_up_idx on public.jobs (first_follow_up, second_follow_up);
 
+create table if not exists public.app_settings (
+  key text primary key,
+  value jsonb not null default '{}'::jsonb,
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz not null default timezone('utc'::text, now())
+);
+
 create or replace function public.handle_updated_at()
 returns trigger
 language plpgsql
@@ -47,6 +54,11 @@ $$;
 drop trigger if exists jobs_updated_at on public.jobs;
 create trigger jobs_updated_at
   before update on public.jobs
+  for each row execute function public.handle_updated_at();
+
+drop trigger if exists app_settings_updated_at on public.app_settings;
+create trigger app_settings_updated_at
+  before update on public.app_settings
   for each row execute function public.handle_updated_at();
 
 create or replace function public.handle_new_user()
@@ -99,6 +111,7 @@ grant execute on function public.is_admin(uuid) to authenticated;
 
 alter table public.profiles enable row level security;
 alter table public.jobs enable row level security;
+alter table public.app_settings enable row level security;
 
 drop policy if exists "Users can view own profile" on public.profiles;
 drop policy if exists "Admin can view all profiles" on public.profiles;
@@ -148,6 +161,28 @@ create policy "Jobs update access"
 create policy "Jobs delete access"
   on public.jobs for delete
   using (auth.uid() = user_id or public.is_admin(auth.uid()));
+
+drop policy if exists "App settings admin select" on public.app_settings;
+drop policy if exists "App settings admin insert" on public.app_settings;
+drop policy if exists "App settings admin update" on public.app_settings;
+drop policy if exists "App settings admin delete" on public.app_settings;
+
+create policy "App settings admin select"
+  on public.app_settings for select
+  using (public.is_admin(auth.uid()));
+
+create policy "App settings admin insert"
+  on public.app_settings for insert
+  with check (public.is_admin(auth.uid()));
+
+create policy "App settings admin update"
+  on public.app_settings for update
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
+
+create policy "App settings admin delete"
+  on public.app_settings for delete
+  using (public.is_admin(auth.uid()));
 
 do $$
 begin

@@ -7,7 +7,8 @@ Next.js app for daily job entry, user-level follow-up dashboards, admin reportin
 - Staff users log in and manage only their own jobs.
 - Admin sees all staff summaries and can add users.
 - Daily report separates new jobs, collections, follow-ups, opening carry-forward, and closing carry-forward per user.
-- Manual report sending posts to the configured n8n webhook.
+- Manual report sending posts to the configured n8n webhook through the app server.
+- Admin can save the n8n webhook URL, boss email, workflow name, and delivery status from the Daily Report page.
 - Vercel cron calls `/api/reports/daily` daily at 12:30 UTC, which is 6:00 PM Sri Lanka time.
 
 ## Required Environment Variables
@@ -29,6 +30,7 @@ Run [supabase/setup.sql](./supabase/setup.sql) in the Supabase SQL editor. It cr
 
 - `profiles`
 - `jobs`
+- `app_settings`
 - non-recursive RLS policies
 - auth user profile trigger
 - realtime publication entries

@@ -13,15 +13,11 @@ export async function POST(req: NextRequest) {
 async function sendDailyReport(req: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const webhookUrl = process.env.N8N_WEBHOOK_URL || process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL
+  const fallbackWebhookUrl = process.env.N8N_WEBHOOK_URL || process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL
   const cronSecret = process.env.CRON_SECRET
 
   if (!supabaseUrl || !serviceKey) {
     return NextResponse.json({ error: 'Supabase service environment variables are missing.' }, { status: 500 })
-  }
-
-  if (!webhookUrl) {
-    return NextResponse.json({ error: 'n8n webhook URL is missing.' }, { status: 500 })
   }
 
   if (cronSecret) {
@@ -35,6 +31,26 @@ async function sendDailyReport(req: NextRequest) {
   const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
+
+  const { data: n8nSetting } = await supabaseAdmin
+    .from('app_settings')
+    .select('value')
+    .eq('key', 'n8n_config')
+    .maybeSingle()
+
+  const n8nConfig = isObject(n8nSetting?.value) ? n8nSetting.value : {}
+  const webhookUrl = typeof n8nConfig.webhookUrl === 'string' && n8nConfig.webhookUrl.trim()
+    ? n8nConfig.webhookUrl.trim()
+    : fallbackWebhookUrl
+  const deliveryEnabled = typeof n8nConfig.enabled === 'boolean' ? n8nConfig.enabled : true
+
+  if (!deliveryEnabled) {
+    return NextResponse.json({ success: true, skipped: true, reason: 'n8n delivery is disabled.', date: reportDate })
+  }
+
+  if (!webhookUrl) {
+    return NextResponse.json({ error: 'n8n webhook URL is missing.' }, { status: 500 })
+  }
 
   const [{ data: profiles, error: profilesError }, { data: jobs, error: jobsError }] = await Promise.all([
     supabaseAdmin.from('profiles').select('*').eq('role', 'user').order('username'),
@@ -58,7 +74,13 @@ async function sendDailyReport(req: NextRequest) {
   const webhookResponse = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...payload,
+      delivery: {
+        emailTo: typeof n8nConfig.emailTo === 'string' ? n8nConfig.emailTo : '',
+        workflowName: typeof n8nConfig.workflowName === 'string' ? n8nConfig.workflowName : 'Daily Follow-up Report',
+      },
+    }),
   })
 
   if (!webhookResponse.ok) {
@@ -66,6 +88,10 @@ async function sendDailyReport(req: NextRequest) {
   }
 
   return NextResponse.json({ success: true, date: reportDate, summary: payload.summary })
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function sriLankaToday() {

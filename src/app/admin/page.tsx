@@ -17,6 +17,22 @@ import {
   todayISO,
 } from '@/lib/followup'
 
+type N8nConfig = {
+  webhookUrl: string
+  emailTo: string
+  workflowName: string
+  enabled: boolean
+}
+
+const defaultN8nConfig: N8nConfig = {
+  webhookUrl: process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || '',
+  emailTo: '',
+  workflowName: 'Daily Follow-up Report',
+  enabled: true,
+}
+
+const n8nStorageKey = 'three-sinha-n8n-config'
+
 function avatarColor(name: string) {
   const colors = ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#be185d']
   return colors[name.charCodeAt(0) % colors.length]
@@ -39,6 +55,10 @@ export default function AdminPage() {
   const [addUserError, setAddUserError] = useState('')
   const [addUserSuccess, setAddUserSuccess] = useState('')
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
+  const [n8nConfig, setN8nConfig] = useState<N8nConfig>(defaultN8nConfig)
+  const [savingN8nConfig, setSavingN8nConfig] = useState(false)
+  const [testingN8n, setTestingN8n] = useState(false)
+  const [n8nConfigMessage, setN8nConfigMessage] = useState('')
 
   useEffect(() => {
     const init = async () => {
@@ -78,10 +98,30 @@ export default function AdminPage() {
     setAllJobs(((jobs || []) as Job[]).map(normalizeJob))
   }, [adminProfile, reportDate])
 
+  const loadN8nConfig = useCallback(async () => {
+    const storedConfig = window.localStorage.getItem(n8nStorageKey)
+    if (storedConfig) {
+      setN8nConfig({ ...defaultN8nConfig, ...JSON.parse(storedConfig) })
+    }
+
+    const { data, error } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'n8n_config')
+      .maybeSingle()
+
+    if (!error && data?.value && typeof data.value === 'object') {
+      const remoteConfig = { ...defaultN8nConfig, ...(data.value as Partial<N8nConfig>) }
+      setN8nConfig(remoteConfig)
+      window.localStorage.setItem(n8nStorageKey, JSON.stringify(remoteConfig))
+    }
+  }, [])
+
   useEffect(() => {
     if (!adminProfile) return
     queueMicrotask(() => {
       void loadData()
+      void loadN8nConfig()
     })
 
     const channel = supabase
@@ -93,7 +133,7 @@ export default function AdminPage() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [adminProfile, loadData])
+  }, [adminProfile, loadData, loadN8nConfig])
 
   const summaries = useMemo(() => buildUserSummaries(users, allJobs, reportDate), [users, allJobs, reportDate])
   const selectedSummary = summaries.find((summary) => summary.profile.id === selectedUserId) || null
@@ -118,21 +158,35 @@ export default function AdminPage() {
 
     try {
       const payload = buildReportPayload(summaries, reportDate)
-      const webhookUrl = process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL
+      const webhookUrl = n8nConfig.webhookUrl.trim()
 
       if (!webhookUrl) {
         setReportMessage('n8n webhook URL is not configured.')
         return
       }
 
-      const response = await fetch(webhookUrl, {
+      const { data: session } = await supabase.auth.getSession()
+      const response = await fetch('/api/n8n/send', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.session?.access_token || ''}`,
+        },
+        body: JSON.stringify({
+          webhookUrl,
+          payload: {
+            ...payload,
+            delivery: {
+              emailTo: n8nConfig.emailTo,
+              workflowName: n8nConfig.workflowName,
+            },
+          },
+        }),
       })
 
       if (!response.ok) {
-        setReportMessage(`Report send failed. n8n returned status ${response.status}.`)
+        const data = await response.json().catch(() => null)
+        setReportMessage(data?.error || `Report send failed with status ${response.status}.`)
         return
       }
 
@@ -142,6 +196,79 @@ export default function AdminPage() {
       setReportMessage('Report send failed. Please check the network and webhook.')
     } finally {
       setSendingReport(false)
+    }
+  }
+
+  const handleSaveN8nConfig = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!adminProfile) return
+
+    setSavingN8nConfig(true)
+    setN8nConfigMessage('')
+
+    const cleanConfig = {
+      ...n8nConfig,
+      webhookUrl: n8nConfig.webhookUrl.trim(),
+      emailTo: n8nConfig.emailTo.trim(),
+      workflowName: n8nConfig.workflowName.trim() || 'Daily Follow-up Report',
+    }
+
+    window.localStorage.setItem(n8nStorageKey, JSON.stringify(cleanConfig))
+
+    const { error } = await supabase
+      .from('app_settings')
+      .upsert({
+        key: 'n8n_config',
+        value: cleanConfig,
+        updated_by: adminProfile.id,
+      }, { onConflict: 'key' })
+
+    if (error) {
+      setN8nConfigMessage('Saved in this browser. Run the updated Supabase setup SQL to save it for everyone.')
+    } else {
+      setN8nConfig(cleanConfig)
+      setN8nConfigMessage('n8n configuration saved.')
+    }
+
+    setSavingN8nConfig(false)
+  }
+
+  const handleTestN8nWebhook = async () => {
+    const webhookUrl = n8nConfig.webhookUrl.trim()
+    setTestingN8n(true)
+    setN8nConfigMessage('')
+
+    if (!webhookUrl) {
+      setN8nConfigMessage('Add the n8n webhook URL before testing.')
+      setTestingN8n(false)
+      return
+    }
+
+    try {
+      const { data: session } = await supabase.auth.getSession()
+      const response = await fetch('/api/n8n/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.session?.access_token || ''}`,
+        },
+        body: JSON.stringify({
+          webhookUrl,
+          payload: {
+            type: 'n8n_configuration_test',
+            source: 'three-sinha-followup-system',
+            workflowName: n8nConfig.workflowName,
+            emailTo: n8nConfig.emailTo,
+            sentAt: new Date().toISOString(),
+          },
+        }),
+      })
+
+      setN8nConfigMessage(response.ok ? 'n8n test sent successfully.' : `n8n test failed with status ${response.status}.`)
+    } catch {
+      setN8nConfigMessage('n8n test failed. Check the webhook URL.')
+    } finally {
+      setTestingN8n(false)
     }
   }
 
@@ -338,12 +465,81 @@ export default function AdminPage() {
           {activeTab === 'report' && (
             <section className="narrow-panel wide">
               <div className="glass-card form-card">
+                <h2 className="section-title">n8n Configuration</h2>
+                <form onSubmit={handleSaveN8nConfig}>
+                  <div className="grid-2">
+                    <div>
+                      <label className="form-label">Webhook URL</label>
+                      <input
+                        className="form-input"
+                        type="url"
+                        value={n8nConfig.webhookUrl}
+                        onChange={(event) => setN8nConfig({ ...n8nConfig, webhookUrl: event.target.value })}
+                        placeholder="https://n8n.example.com/webhook/..."
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Boss Email</label>
+                      <input
+                        className="form-input"
+                        type="email"
+                        value={n8nConfig.emailTo}
+                        onChange={(event) => setN8nConfig({ ...n8nConfig, emailTo: event.target.value })}
+                        placeholder="boss@example.com"
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Workflow Name</label>
+                      <input
+                        className="form-input"
+                        value={n8nConfig.workflowName}
+                        onChange={(event) => setN8nConfig({ ...n8nConfig, workflowName: event.target.value })}
+                      />
+                    </div>
+                    <label className="toggle-row">
+                      <input
+                        type="checkbox"
+                        checked={n8nConfig.enabled}
+                        onChange={(event) => setN8nConfig({ ...n8nConfig, enabled: event.target.checked })}
+                      />
+                      <span>Enable daily report delivery</span>
+                    </label>
+                  </div>
+
+                  <div className="n8n-config-notes">
+                    <div>
+                      <span>Method</span>
+                      <strong>POST</strong>
+                    </div>
+                    <div>
+                      <span>Payload</span>
+                      <strong>JSON daily report</strong>
+                    </div>
+                    <div>
+                      <span>Schedule</span>
+                      <strong>6:00 PM Sri Lanka</strong>
+                    </div>
+                  </div>
+
+                  <div className="button-row">
+                    <button className="btn-primary" disabled={savingN8nConfig}>
+                      {savingN8nConfig ? 'Saving...' : 'Save Configuration'}
+                    </button>
+                    <button className="btn-secondary" type="button" onClick={handleTestN8nWebhook} disabled={testingN8n}>
+                      {testingN8n ? 'Testing...' : 'Test Webhook'}
+                    </button>
+                  </div>
+                </form>
+                {n8nConfigMessage && <div className={`alert ${n8nConfigMessage.includes('success') || n8nConfigMessage.includes('saved') ? 'success' : 'error'}`}>{n8nConfigMessage}</div>}
+              </div>
+
+              <div className="glass-card form-card">
                 <h2 className="section-title">Report to Boss</h2>
                 <p className="muted-text">This report includes each user separately, today&apos;s new jobs, today&apos;s follow-ups, collections, and balances to carry into tomorrow.</p>
                 <CompanyStats totals={companyTotals} compact />
                 <div className="button-row">
                   <button className="btn-secondary" onClick={handlePreviewReport}>Preview Report</button>
-                  <button className="btn-success" onClick={handleSendReport} disabled={sendingReport}>
+                  <button className="btn-success" onClick={handleSendReport} disabled={sendingReport || !n8nConfig.enabled}>
                     {sendingReport ? 'Sending...' : 'Send to n8n'}
                   </button>
                 </div>

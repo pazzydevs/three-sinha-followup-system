@@ -819,6 +819,49 @@ button.user-summary-card {
   color: #fb7185;
 }
 
+.toggle-row {
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  padding-top: 1.55rem;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-blue);
+}
+
+.n8n-config-notes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.n8n-config-notes div {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.n8n-config-notes span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+}
+
+.n8n-config-notes strong {
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
 @media (max-width: 900px) {
   .sidebar {
     position: static;
@@ -853,6 +896,10 @@ button.user-summary-card {
   }
 
   .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .n8n-config-notes {
     grid-template-columns: 1fr;
   }
 }

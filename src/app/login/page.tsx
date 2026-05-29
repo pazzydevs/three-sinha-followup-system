@@ -41,7 +41,8 @@ export default function LoginPage() {
         return
       }
 
-      router.push(profile.role === 'admin' ? '/admin' : '/dashboard')
+      router.replace(profile.role === 'admin' ? '/admin' : '/dashboard')
+      setTimeout(() => setLoading(false), 3000)
     } catch {
       setError('Something went wrong. Please try again.')
       setLoading(false)

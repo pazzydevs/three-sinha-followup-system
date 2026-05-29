@@ -48,7 +48,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Only admins can send n8n webhooks.' }, { status: 403 })
     }
 
-    const webhookResponse = await sendWebhook(webhookUrl, httpMethod, payload)
+    const webhookResult = await sendWebhookWithFallback(webhookUrl, httpMethod, payload)
+    const webhookResponse = webhookResult.response
 
     if (!webhookResponse.ok) {
       if (webhookResponse.status === 404) {
@@ -60,7 +61,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `n8n returned status ${webhookResponse.status}` }, { status: 502 })
     }
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({
+      success: true,
+      usedMethod: webhookResult.method,
+      usedWebhookUrl: webhookResult.url,
+    })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to send n8n webhook.'
     return NextResponse.json({ error: message }, { status: 500 })
@@ -92,6 +97,61 @@ function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknow
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
+
+async function sendWebhookWithFallback(webhookUrl: string, method: 'GET' | 'POST', payload: unknown) {
+  const candidates = buildWebhookCandidates(webhookUrl, method)
+  let lastResult: { response: Response; url: string; method: 'GET' | 'POST' } | null = null
+
+  for (const candidate of candidates) {
+    const response = await sendWebhook(candidate.url, candidate.method, payload)
+    const result = { response, url: candidate.url, method: candidate.method }
+
+    if (response.ok) {
+      return result
+    }
+
+    lastResult = result
+
+    if (response.status !== 404 && response.status !== 405) {
+      return result
+    }
+  }
+
+  return lastResult!
+}
+
+function buildWebhookCandidates(webhookUrl: string, method: 'GET' | 'POST') {
+  const alternateMethod: 'GET' | 'POST' = method === 'GET' ? 'POST' : 'GET'
+  const relatedUrl = getRelatedWebhookUrl(webhookUrl)
+  const rawCandidates: Array<{ url: string; method: 'GET' | 'POST' }> = [
+    { url: webhookUrl, method },
+    { url: webhookUrl, method: alternateMethod },
+    ...(relatedUrl ? [
+      { url: relatedUrl, method },
+      { url: relatedUrl, method: alternateMethod },
+    ] : []),
+  ]
+  const seen = new Set<string>()
+
+  return rawCandidates.filter((candidate) => {
+    const key = `${candidate.method}:${candidate.url}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function getRelatedWebhookUrl(webhookUrl: string) {
+  if (webhookUrl.includes('/webhook-test/')) {
+    return webhookUrl.replace('/webhook-test/', '/webhook/')
+  }
+
+  if (webhookUrl.includes('/webhook/')) {
+    return webhookUrl.replace('/webhook/', '/webhook-test/')
+  }
+
+  return null
 }
 
 function buildGetPayload(payload: unknown) {

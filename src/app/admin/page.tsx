@@ -220,8 +220,11 @@ export default function AdminPage() {
         return
       }
 
+      const data = await response.json().catch(() => null)
       setReportPreview(payload.reportText)
-      setReportMessage(usingTestUrl ? 'Report sent to n8n test webhook successfully.' : 'Report sent to n8n successfully.')
+      const target = data?.usedWebhookUrl?.includes('/webhook-test/') || usingTestUrl ? 'test webhook' : 'production webhook'
+      const method = data?.usedMethod ? ` using ${data.usedMethod}` : ''
+      setReportMessage(`Report sent to n8n ${target}${method} successfully.`)
     } catch {
       setReportMessage('Report send failed. Please check the network and webhook.')
     } finally {
@@ -297,7 +300,10 @@ export default function AdminPage() {
         }),
       })
 
-      setN8nConfigMessage(response.ok ? 'n8n test sent successfully.' : `n8n test failed with status ${response.status}.`)
+      const data = await response.json().catch(() => null)
+      setN8nConfigMessage(response.ok
+        ? `n8n test sent successfully${data?.usedMethod ? ` using ${data.usedMethod}` : ''}.`
+        : data?.error || `n8n test failed with status ${response.status}.`)
     } catch {
       setN8nConfigMessage('n8n test failed. Check the webhook URL.')
     } finally {

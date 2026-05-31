@@ -44,6 +44,8 @@ const emptyForm: JobForm = {
   action_require: 'NONE',
 }
 
+const compactViewStorageKey = 'three-sinha-dashboard-compact-view'
+
 function avatarColor(name: string) {
   const colors = ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed']
   return colors[name.charCodeAt(0) % colors.length]
@@ -62,6 +64,13 @@ export default function DashboardPage() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [compactView, setCompactView] = useState(false)
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setCompactView(window.localStorage.getItem(compactViewStorageKey) === 'true')
+    })
+  }, [])
 
   useEffect(() => {
     const init = async () => {
@@ -224,6 +233,11 @@ export default function DashboardPage() {
     router.push('/login')
   }
 
+  const handleCompactViewChange = (checked: boolean) => {
+    setCompactView(checked)
+    window.localStorage.setItem(compactViewStorageKey, String(checked))
+  }
+
   if (loading || !summary || !profile) {
     return (
       <div className="center-screen">
@@ -234,7 +248,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="main-layout">
+    <div className={`main-layout ${compactView ? 'compact-work-view' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="brand-mark">TS</div>
@@ -275,6 +289,14 @@ export default function DashboardPage() {
             <p>{longDisplayDate(filterDate)}</p>
           </div>
           <div className="toolbar-row">
+            <label className="view-toggle">
+              <input
+                type="checkbox"
+                checked={compactView}
+                onChange={(event) => handleCompactViewChange(event.target.checked)}
+              />
+              <span>Compact view</span>
+            </label>
             {activeTab === 'today' && (
               <input className="form-input compact-input" type="date" value={filterDate} onChange={(event) => setFilterDate(event.target.value)} />
             )}

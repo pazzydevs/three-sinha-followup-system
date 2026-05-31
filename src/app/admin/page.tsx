@@ -38,6 +38,7 @@ const defaultN8nConfig: N8nConfig = {
 }
 
 const n8nStorageKey = 'three-sinha-n8n-config'
+const adminCompactViewStorageKey = 'three-sinha-admin-compact-view'
 
 function avatarColor(name: string) {
   const colors = ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#be185d']
@@ -83,6 +84,13 @@ export default function AdminPage() {
   const [savingN8nConfig, setSavingN8nConfig] = useState(false)
   const [testingN8n, setTestingN8n] = useState(false)
   const [n8nConfigMessage, setN8nConfigMessage] = useState('')
+  const [compactView, setCompactView] = useState(false)
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setCompactView(window.localStorage.getItem(adminCompactViewStorageKey) === 'true')
+    })
+  }, [])
 
   useEffect(() => {
     const init = async () => {
@@ -431,6 +439,11 @@ export default function AdminPage() {
     router.push('/login')
   }
 
+  const handleCompactViewChange = (checked: boolean) => {
+    setCompactView(checked)
+    window.localStorage.setItem(adminCompactViewStorageKey, String(checked))
+  }
+
   if (loading) {
     return (
       <div className="center-screen">
@@ -441,7 +454,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="main-layout">
+    <div className={`main-layout ${compactView ? 'compact-work-view' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-brand">
           <div className="brand-mark">TS</div>
@@ -488,6 +501,14 @@ export default function AdminPage() {
             <p>{longDisplayDate(reportDate)}</p>
           </div>
           <div className="toolbar-row">
+            <label className="view-toggle">
+              <input
+                type="checkbox"
+                checked={compactView}
+                onChange={(event) => handleCompactViewChange(event.target.checked)}
+              />
+              <span>Compact view</span>
+            </label>
             <input className="form-input compact-input" type="date" value={reportDate} onChange={(event) => setReportDate(event.target.value)} />
             <button className="btn-secondary" onClick={loadData}>Refresh</button>
           </div>

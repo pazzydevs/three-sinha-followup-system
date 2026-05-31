@@ -20,9 +20,23 @@ NEXT_PUBLIC_N8N_WEBHOOK_URL=
 N8N_WEBHOOK_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 CRON_SECRET=
+ALLOWED_N8N_HOSTS=
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is required for admin user creation and the scheduled server-side report route.
+`SUPABASE_SERVICE_ROLE_KEY` is required for admin user creation and the scheduled server-side report route. `CRON_SECRET` should be set in Vercel so scheduled report calls include an authorization header. `ALLOWED_N8N_HOSTS` is optional and defaults to `n8n.pazzy.store`.
+
+## Security Baseline
+
+This codebase is maintained against an OWASP ASVS Level 2 oriented baseline:
+
+- Supabase Auth is the application authentication provider; Vercel only hosts the app.
+- Supabase RLS keeps users scoped to their own jobs, while admins can manage users, reports, and n8n settings.
+- Server-side admin APIs verify the Supabase session, admin role, same-origin request, JSON content type, size limits, and basic rate limits.
+- n8n webhook delivery is server-side only and restricted to HTTPS n8n webhook paths on allowed hosts.
+- Security headers are configured in `next.config.ts`, including CSP, HSTS, frame denial, content sniffing protection, referrer policy, and permissions policy.
+- Secrets must stay in Vercel/Supabase environment configuration and must not be committed.
+
+Every new feature should preserve these controls and keep user authorization decisions on the server or in Supabase RLS.
 
 ## Supabase Setup
 
@@ -51,6 +65,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ```bash
 npm run lint
 npm run build
+npm audit --audit-level=moderate
 node scripts/check-db.js
 ```
 

@@ -1,83 +1,55 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { NextRequest } from 'next/server'
+import {
+  normalizeHttpMethod,
+  readJsonBody,
+  requireAdmin,
+  secureJson,
+  securityError,
+  validateWebhookUrl,
+} from '@/lib/server-security'
+
+type N8nSendBody = {
+  webhookUrl: unknown
+  payload: unknown
+  method?: unknown
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const body = await readJsonBody<N8nSendBody>(req, 1_000_000)
+    if (!body.ok) return body.response
 
-    if (!supabaseUrl || !anonKey) {
-      return NextResponse.json({ error: 'Supabase environment variables are missing.' }, { status: 500 })
-    }
+    const admin = await requireAdmin(req, 'n8n-send')
+    if (!admin.ok) return admin.response
 
-    const authHeader = req.headers.get('authorization')
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
+    const { url: webhookUrl, error: webhookError } = validateWebhookUrl(body.data.webhookUrl)
+    if (webhookError) return securityError(webhookError, 400)
 
-    if (!token) {
-      return NextResponse.json({ error: 'Missing admin session.' }, { status: 401 })
-    }
+    const httpMethod = normalizeHttpMethod(body.data.method || 'POST')
+    if (!httpMethod) return securityError('Invalid n8n HTTP method.', 400)
 
-    const { webhookUrl, payload, method = 'POST' } = await req.json()
-    const httpMethod = normalizeMethod(method)
-
-    if (!isValidWebhookUrl(webhookUrl)) {
-      return NextResponse.json({ error: 'Invalid n8n webhook URL.' }, { status: 400 })
-    }
-
-    if (!httpMethod) {
-      return NextResponse.json({ error: 'Invalid n8n HTTP method.' }, { status: 400 })
-    }
-
-    const supabaseUser = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { autoRefreshToken: false, persistSession: false },
-    })
-
-    const { data: { user }, error: userError } = await supabaseUser.auth.getUser(token)
-    if (userError || !user) {
-      return NextResponse.json({ error: 'Invalid admin session.' }, { status: 401 })
-    }
-
-    const { data: profile, error: profileError } = await supabaseUser
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-
-    if (profileError || profile?.role !== 'admin') {
-      return NextResponse.json({ error: 'Only admins can send n8n webhooks.' }, { status: 403 })
-    }
-
-    const webhookResult = await sendWebhookWithFallback(webhookUrl, httpMethod, payload)
+    const webhookResult = await sendWebhookWithFallback(webhookUrl, httpMethod, body.data.payload)
     const webhookResponse = webhookResult.response
 
     if (!webhookResponse.ok) {
       if (webhookResponse.status === 404) {
-        return NextResponse.json({
-          error: 'n8n returned 404. Click "Listen for test event" in n8n and use the /webhook-test URL, or activate the workflow and use the /webhook production URL.',
-        }, { status: 502 })
+        return securityError(
+          'n8n returned 404. Click "Listen for test event" in n8n and use the /webhook-test URL, or activate the workflow and use the /webhook production URL.',
+          502,
+        )
       }
 
-      return NextResponse.json({ error: `n8n returned status ${webhookResponse.status}` }, { status: 502 })
+      return securityError(`n8n returned status ${webhookResponse.status}`, 502)
     }
 
-    return NextResponse.json({
+    return secureJson({
       success: true,
       usedMethod: webhookResult.method,
       usedWebhookUrl: webhookResult.url,
     })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Failed to send n8n webhook.'
-    return NextResponse.json({ error: message }, { status: 500 })
+  } catch {
+    return securityError('Failed to send n8n webhook.', 500)
   }
-}
-
-function normalizeMethod(value: unknown): 'GET' | 'POST' | null {
-  if (value === 'GET' || value === 'POST') return value
-  if (typeof value !== 'string') return null
-
-  const upper = value.toUpperCase()
-  return upper === 'GET' || upper === 'POST' ? upper : null
 }
 
 function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknown) {
@@ -89,13 +61,14 @@ function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknow
       url.searchParams.set(key, value)
     })
 
-    return fetch(url, { method: 'GET' })
+    return fetch(url, { method: 'GET', redirect: 'manual' })
   }
 
   return fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    redirect: 'manual',
   })
 }
 
@@ -180,15 +153,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown, fallback: string) {
   return typeof value === 'string' && value ? value : fallback
-}
-
-function isValidWebhookUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false
-
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
-  } catch {
-    return false
-  }
 }

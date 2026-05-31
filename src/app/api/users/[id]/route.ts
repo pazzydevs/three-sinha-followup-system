@@ -1,29 +1,43 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { NextRequest } from 'next/server'
+import {
+  normalizeUsername,
+  readJsonBody,
+  requireAdmin,
+  secureJson,
+  securityError,
+  validateEmail,
+  validatePassword,
+  validateUsername,
+} from '@/lib/server-security'
 
 type RouteContext = {
   params: Promise<{ id: string }>
 }
 
+type UpdateUserBody = {
+  username: unknown
+  email: unknown
+  password?: unknown
+}
+
 export async function PATCH(req: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
-    const { username, email, password } = await req.json()
-    const clients = await getAdminClients(req)
+    const body = await readJsonBody<UpdateUserBody>(req)
+    if (!body.ok) return body.response
 
-    if (clients.error) return clients.error
+    const admin = await requireAdmin(req, 'update-user')
+    if (!admin.ok) return admin.response
 
-    const cleanUsername = String(username || '').trim().toLowerCase()
-    const cleanEmail = String(email || '').trim().toLowerCase()
-    const cleanPassword = String(password || '')
+    const cleanUsername = normalizeUsername(body.data.username)
+    const usernameError = validateUsername(cleanUsername)
+    if (usernameError) return securityError(usernameError, 400)
 
-    if (!cleanUsername || !cleanEmail) {
-      return NextResponse.json({ error: 'Username and email are required.' }, { status: 400 })
-    }
+    const { email, error: emailError } = validateEmail(body.data.email)
+    if (emailError) return securityError(emailError, 400)
 
-    if (cleanPassword && cleanPassword.length < 6) {
-      return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 })
-    }
+    const { password, error: passwordError } = validatePassword(body.data.password, false)
+    if (passwordError) return securityError(passwordError, 400)
 
     const updatePayload: {
       email: string
@@ -31,98 +45,52 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       user_metadata: { username: string }
       password?: string
     } = {
-      email: cleanEmail,
+      email,
       email_confirm: true,
       user_metadata: { username: cleanUsername },
     }
 
-    if (cleanPassword) {
-      updatePayload.password = cleanPassword
+    if (password) {
+      updatePayload.password = password
     }
 
-    const { error: authError } = await clients.supabaseAdmin.auth.admin.updateUserById(id, updatePayload)
+    const { error: authError } = await admin.supabaseAdmin.auth.admin.updateUserById(id, updatePayload)
     if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 400 })
+      return securityError(authError.message, 400)
     }
 
-    const { error: profileError } = await clients.supabaseAdmin
+    const { error: profileError } = await admin.supabaseAdmin
       .from('profiles')
-      .update({ username: cleanUsername, email: cleanEmail })
+      .update({ username: cleanUsername, email })
       .eq('id', id)
 
     if (profileError) {
-      return NextResponse.json({ error: profileError.message }, { status: 500 })
+      return securityError(profileError.message, 500)
     }
 
-    return NextResponse.json({ success: true })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal server error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    return secureJson({ success: true })
+  } catch {
+    return securityError('Internal server error', 500)
   }
 }
 
 export async function DELETE(req: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
-    const clients = await getAdminClients(req)
+    const admin = await requireAdmin(req, 'delete-user')
+    if (!admin.ok) return admin.response
 
-    if (clients.error) return clients.error
-
-    const { error } = await clients.supabaseAdmin.auth.admin.deleteUser(id)
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 })
+    if (id === admin.userId) {
+      return securityError('Admins cannot delete their own account.', 400)
     }
 
-    return NextResponse.json({ success: true })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal server error'
-    return NextResponse.json({ error: message }, { status: 500 })
+    const { error } = await admin.supabaseAdmin.auth.admin.deleteUser(id)
+    if (error) {
+      return securityError(error.message, 400)
+    }
+
+    return secureJson({ success: true })
+  } catch {
+    return securityError('Internal server error', 500)
   }
-}
-
-async function getAdminClients(req: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-
-  if (!supabaseUrl || !anonKey) {
-    return { error: NextResponse.json({ error: 'Supabase public environment variables are missing.' }, { status: 500 }) }
-  }
-
-  if (!serviceKey) {
-    return { error: NextResponse.json({ error: 'SUPABASE_SERVICE_ROLE_KEY is required to manage users.' }, { status: 500 }) }
-  }
-
-  const authHeader = req.headers.get('authorization')
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : ''
-
-  if (!token) {
-    return { error: NextResponse.json({ error: 'Missing admin session.' }, { status: 401 }) }
-  }
-
-  const supabaseUser = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
-
-  const { data: { user }, error: userError } = await supabaseUser.auth.getUser(token)
-  if (userError || !user) {
-    return { error: NextResponse.json({ error: 'Invalid admin session.' }, { status: 401 }) }
-  }
-
-  const { data: profile, error: profileError } = await supabaseUser
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  if (profileError || profile?.role !== 'admin') {
-    return { error: NextResponse.json({ error: 'Only admins can manage users.' }, { status: 403 }) }
-  }
-
-  const supabaseAdmin = createClient(supabaseUrl, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
-
-  return { supabaseAdmin }
 }

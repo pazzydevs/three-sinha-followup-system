@@ -591,7 +591,7 @@ export default function AdminPage() {
                       </div>
                       <div>
                         <label className="form-label">Password</label>
-                        <input className="form-input" type="password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} required minLength={6} />
+                        <input className="form-input" type="password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} required minLength={8} />
                       </div>
                     </div>
                     <div className="button-row">
@@ -620,7 +620,7 @@ export default function AdminPage() {
                       </div>
                       <div>
                         <label className="form-label">New Password</label>
-                        <input className="form-input" type="password" value={editUserForm.password} onChange={(event) => setEditUserForm({ ...editUserForm, password: event.target.value })} placeholder="Leave blank to keep current password" minLength={6} />
+                        <input className="form-input" type="password" value={editUserForm.password} onChange={(event) => setEditUserForm({ ...editUserForm, password: event.target.value })} placeholder="Leave blank to keep current password" minLength={8} />
                       </div>
                     </div>
                     <div className="button-row">

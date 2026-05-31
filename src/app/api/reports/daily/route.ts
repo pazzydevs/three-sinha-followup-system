@@ -1,6 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { Job, Profile, buildReportPayload, buildUserSummaries, normalizeJob } from '@/lib/followup'
+import {
+  normalizeHttpMethod,
+  secureJson,
+  securityError,
+  validateWebhookUrl,
+} from '@/lib/server-security'
 
 export async function GET(req: NextRequest) {
   return sendDailyReport(req)
@@ -17,13 +23,13 @@ async function sendDailyReport(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET
 
   if (!supabaseUrl || !serviceKey) {
-    return NextResponse.json({ error: 'Supabase service environment variables are missing.' }, { status: 500 })
+    return securityError('Supabase service environment variables are missing.', 500)
   }
 
   if (cronSecret) {
     const authHeader = req.headers.get('authorization')
     if (authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 })
+      return securityError('Unauthorized.', 401)
     }
   }
 
@@ -42,15 +48,20 @@ async function sendDailyReport(req: NextRequest) {
   const webhookUrl = typeof n8nConfig.webhookUrl === 'string' && n8nConfig.webhookUrl.trim()
     ? n8nConfig.webhookUrl.trim()
     : fallbackWebhookUrl
-  const httpMethod = n8nConfig.httpMethod === 'GET' ? 'GET' : 'POST'
+  const httpMethod = normalizeHttpMethod(n8nConfig.httpMethod || 'POST') || 'POST'
   const deliveryEnabled = typeof n8nConfig.enabled === 'boolean' ? n8nConfig.enabled : true
 
   if (!deliveryEnabled) {
-    return NextResponse.json({ success: true, skipped: true, reason: 'n8n delivery is disabled.', date: reportDate })
+    return secureJson({ success: true, skipped: true, reason: 'n8n delivery is disabled.', date: reportDate })
   }
 
   if (!webhookUrl) {
-    return NextResponse.json({ error: 'n8n webhook URL is missing.' }, { status: 500 })
+    return securityError('n8n webhook URL is missing.', 500)
+  }
+
+  const { url: validatedWebhookUrl, error: webhookError } = validateWebhookUrl(webhookUrl)
+  if (webhookError) {
+    return securityError(webhookError, 500)
   }
 
   const [{ data: profiles, error: profilesError }, { data: jobs, error: jobsError }] = await Promise.all([
@@ -59,11 +70,11 @@ async function sendDailyReport(req: NextRequest) {
   ])
 
   if (profilesError) {
-    return NextResponse.json({ error: profilesError.message }, { status: 500 })
+    return securityError(profilesError.message, 500)
   }
 
   if (jobsError) {
-    return NextResponse.json({ error: jobsError.message }, { status: 500 })
+    return securityError(jobsError.message, 500)
   }
 
   const summaries = buildUserSummaries(
@@ -79,20 +90,18 @@ async function sendDailyReport(req: NextRequest) {
       workflowName: typeof n8nConfig.workflowName === 'string' ? n8nConfig.workflowName : 'Daily Follow-up Report',
     },
   }
-  const webhookResult = await sendWebhookWithFallback(webhookUrl, httpMethod, webhookPayload)
+  const webhookResult = await sendWebhookWithFallback(validatedWebhookUrl, httpMethod, webhookPayload)
   const webhookResponse = webhookResult.response
 
   if (!webhookResponse.ok) {
     if (webhookResponse.status === 404) {
-      return NextResponse.json({
-        error: 'n8n returned 404. Activate the n8n workflow for the production webhook URL before scheduled reports can run.',
-      }, { status: 502 })
+      return securityError('n8n returned 404. Activate the n8n workflow for the production webhook URL before scheduled reports can run.', 502)
     }
 
-    return NextResponse.json({ error: `n8n returned status ${webhookResponse.status}` }, { status: 502 })
+    return securityError(`n8n returned status ${webhookResponse.status}`, 502)
   }
 
-  return NextResponse.json({
+  return secureJson({
     success: true,
     date: reportDate,
     summary: payload.summary,
@@ -114,13 +123,14 @@ function sendWebhook(webhookUrl: string, method: 'GET' | 'POST', payload: unknow
       url.searchParams.set(key, value)
     })
 
-    return fetch(url, { method: 'GET' })
+    return fetch(url, { method: 'GET', redirect: 'manual' })
   }
 
   return fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    redirect: 'manual',
   })
 }
 

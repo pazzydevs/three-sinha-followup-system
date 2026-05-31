@@ -311,7 +311,14 @@ create policy "Edit requests select access"
 
 create policy "Edit requests insert own"
   on public.edit_requests for insert
-  with check (auth.uid() = user_id);
+  with check (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.jobs
+      where jobs.id = edit_requests.job_id
+        and jobs.user_id = auth.uid()
+    )
+  );
 
 create policy "Edit requests admin update"
   on public.edit_requests for update
@@ -393,6 +400,8 @@ begin
   end;
 end;
 $$;
+
+notify pgrst, 'reload schema';
 
 -- Existing auth users can be repaired after running this setup:
 -- insert into public.profiles (id, username, role)

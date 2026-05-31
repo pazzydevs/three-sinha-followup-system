@@ -26,6 +26,17 @@ type Database = {
         }
         Relationships: []
       }
+      jobs: {
+        Row: {
+          id: string
+          user_id: string
+          job_no: string
+          cx_name: string
+        }
+        Insert: Record<string, never>
+        Update: Record<string, never>
+        Relationships: []
+      }
       app_settings: {
         Row: {
           key: string
@@ -61,6 +72,18 @@ type AdminContext =
       ok: true
       supabaseAdmin: ReturnType<typeof createClient<Database>>
       userId: string
+    }
+  | {
+      ok: false
+      response: NextResponse
+    }
+
+type UserContext =
+  | {
+      ok: true
+      supabaseAdmin: ReturnType<typeof createClient<Database>>
+      userId: string
+      role: string
     }
   | {
       ok: false
@@ -148,6 +171,17 @@ export function rateLimit(req: NextRequest, action: string, maxRequests = 30, wi
 }
 
 export async function requireAdmin(req: NextRequest, action: string): Promise<AdminContext> {
+  const user = await requireAuthenticatedUser(req, action)
+  if (!user.ok) return user
+
+  if (user.role !== 'admin') {
+    return { ok: false, response: securityError('Admin access required.', 403) }
+  }
+
+  return { ok: true, supabaseAdmin: user.supabaseAdmin, userId: user.userId }
+}
+
+export async function requireAuthenticatedUser(req: NextRequest, action: string): Promise<UserContext> {
   const originError = requireSameOrigin(req)
   if (originError) return { ok: false, response: originError }
 
@@ -186,14 +220,16 @@ export async function requireAdmin(req: NextRequest, action: string): Promise<Ad
     .single()
 
   if (profileError || profile?.role !== 'admin') {
-    return { ok: false, response: securityError('Admin access required.', 403) }
+    if (profileError || !profile?.role) {
+      return { ok: false, response: securityError('Profile access required.', 403) }
+    }
   }
 
   const supabaseAdmin = createClient<Database>(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
-  return { ok: true, supabaseAdmin, userId: user.id }
+  return { ok: true, supabaseAdmin, userId: user.id, role: profile.role }
 }
 
 export function normalizeUsername(value: unknown) {

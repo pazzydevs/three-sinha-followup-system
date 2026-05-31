@@ -177,27 +177,20 @@ export default function DashboardPage() {
   const loadRequests = useCallback(async () => {
     if (!profile) return
 
-    const { data } = await supabase
-      .from('edit_requests')
-      .select('*')
-      .eq('user_id', profile.id)
-      .order('created_at', { ascending: false })
+    const { data: session } = await supabase.auth.getSession()
+    const response = await fetch('/api/edit-workflow', {
+      headers: { Authorization: `Bearer ${session.session?.access_token || ''}` },
+    })
+    const data = await response.json().catch(() => null)
 
-    setEditRequests((data || []) as EditRequest[])
+    setEditRequests((data?.requests || []) as EditRequest[])
+    setNotifications((data?.notifications || []) as UserNotification[])
+    notificationsLoadedRef.current = true
   }, [profile])
 
   const loadNotifications = useCallback(async () => {
-    if (!profile) return
-
-    const { data } = await supabase
-      .from('user_notifications')
-      .select('*')
-      .eq('user_id', profile.id)
-      .order('created_at', { ascending: false })
-
-    setNotifications((data || []) as UserNotification[])
-    notificationsLoadedRef.current = true
-  }, [profile])
+    await loadRequests()
+  }, [loadRequests])
 
   useEffect(() => {
     if (!profile) return
@@ -216,34 +209,24 @@ export default function DashboardPage() {
         filter: `user_id=eq.${profile.id}`,
       }, loadJobs)
       .on('postgres_changes', {
-        event: '*',
+        event: 'UPDATE',
         schema: 'public',
-        table: 'edit_requests',
-        filter: `user_id=eq.${profile.id}`,
-      }, () => {
-        void loadRequests()
-        void loadNotifications()
-      })
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'user_notifications',
-        filter: `user_id=eq.${profile.id}`,
+        table: 'app_settings',
+        filter: 'key=eq.edit_workflow_state',
       }, () => {
         if (notificationsLoadedRef.current) {
           playNotificationSound()
         }
         void loadNotifications()
       })
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'user_notifications',
-        filter: `user_id=eq.${profile.id}`,
-      }, loadNotifications)
       .subscribe()
 
+    const interval = window.setInterval(() => {
+      void loadNotifications()
+    }, 15_000)
+
     return () => {
+      window.clearInterval(interval)
       supabase.removeChannel(channel)
     }
   }, [profile, loadJobs, loadNotifications, loadRequests])
@@ -370,15 +353,24 @@ export default function DashboardPage() {
       return
     }
 
-    const { error } = await supabase.from('edit_requests').insert({
-      job_id: requestJob.id,
-      user_id: profile.id,
-      requested_column: requestColumn,
-      message: cleanNote,
+    const { data: session } = await supabase.auth.getSession()
+    const response = await fetch('/api/edit-workflow', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.session?.access_token || ''}`,
+      },
+      body: JSON.stringify({
+        action: 'request_edit',
+        jobId: requestJob.id,
+        requestedColumn: requestColumn,
+        message: cleanNote,
+      }),
     })
 
-    if (error) {
-      setRequestFeedback(error.message)
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      setRequestFeedback(data?.error || 'Could not send request.')
       setRequestSaving(false)
       return
     }
@@ -391,10 +383,15 @@ export default function DashboardPage() {
   const markNotificationRead = async (notification: UserNotification) => {
     if (notification.read_at) return
 
-    await supabase
-      .from('user_notifications')
-      .update({ read_at: new Date().toISOString() })
-      .eq('id', notification.id)
+    const { data: session } = await supabase.auth.getSession()
+    await fetch('/api/edit-workflow', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.session?.access_token || ''}`,
+      },
+      body: JSON.stringify({ action: 'mark_read', notificationId: notification.id }),
+    })
     await loadNotifications()
   }
 

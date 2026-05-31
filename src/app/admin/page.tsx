@@ -184,12 +184,13 @@ export default function AdminPage() {
   const loadEditRequests = useCallback(async () => {
     if (!adminProfile) return
 
-    const { data } = await supabase
-      .from('edit_requests')
-      .select('*')
-      .order('created_at', { ascending: false })
+    const { data: session } = await supabase.auth.getSession()
+    const response = await fetch('/api/edit-workflow', {
+      headers: { Authorization: `Bearer ${session.session?.access_token || ''}` },
+    })
+    const data = await response.json().catch(() => null)
 
-    setEditRequests((data || []) as EditRequest[])
+    setEditRequests((data?.requests || []) as EditRequest[])
     setInquiriesLoaded(true)
   }, [adminProfile])
 
@@ -228,15 +229,20 @@ export default function AdminPage() {
       .channel('admin-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'edit_requests' }, (payload) => {
-        if (payload.eventType === 'INSERT' && inquiriesLoaded) {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_settings', filter: 'key=eq.edit_workflow_state' }, () => {
+        if (inquiriesLoaded) {
           playNotificationSound()
         }
         void loadEditRequests()
       })
       .subscribe()
 
+    const interval = window.setInterval(() => {
+      void loadEditRequests()
+    }, 15_000)
+
     return () => {
+      window.clearInterval(interval)
       supabase.removeChannel(channel)
     }
   }, [adminProfile, inquiriesLoaded, loadData, loadEditRequests, loadN8nConfig])
@@ -509,32 +515,22 @@ export default function AdminPage() {
     if (!adminProfile) return
 
     const response = (adminResponses[request.id] || '').trim()
-    const job = allJobs.find((item) => item.id === request.job_id)
-    const fieldLabel = inquiryColumnLabel(request.requested_column)
-    const title = status === 'approved' ? 'Edit request approved' : 'Edit request rejected'
-    const message = status === 'approved'
-      ? `You can now edit ${fieldLabel} for job ${job?.job_no || 'your job'}.`
-      : `Your edit request for ${fieldLabel} on job ${job?.job_no || 'your job'} was rejected.${response ? ` ${response}` : ''}`
-
-    const { error } = await supabase
-      .from('edit_requests')
-      .update({
+    const { data: session } = await supabase.auth.getSession()
+    const result = await fetch('/api/edit-workflow', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.session?.access_token || ''}`,
+      },
+      body: JSON.stringify({
+        action: 'decision',
+        requestId: request.id,
         status,
-        admin_response: response || null,
-        approved_by: status === 'approved' ? adminProfile.id : null,
-        approved_at: status === 'approved' ? new Date().toISOString() : null,
-      })
-      .eq('id', request.id)
-
-    if (error) return
-
-    await supabase.from('user_notifications').insert({
-      user_id: request.user_id,
-      title,
-      message,
-      type: status === 'approved' ? 'edit_approved' : 'edit_rejected',
-      related_request_id: request.id,
+        adminResponse: response,
+      }),
     })
+
+    if (!result.ok) return
 
     setAdminResponses((current) => ({ ...current, [request.id]: '' }))
     await loadEditRequests()

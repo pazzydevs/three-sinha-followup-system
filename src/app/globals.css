@@ -32,11 +32,14 @@
 }
 
 html, body {
+  width: 100%;
+  min-width: 0;
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
 
 /* Scrollbar */
@@ -383,17 +386,24 @@ select.form-input option { background: #1e293b; color: var(--text-primary); }
 .main-layout {
   display: flex;
   min-height: 100vh;
+  width: 100%;
+  overflow-x: hidden;
 }
 .main-content {
-  flex: 1;
+  flex: none;
+  width: calc(100% - 260px);
   margin-left: 260px;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-width: 0;
 }
 .page-content {
   flex: 1;
   padding: 1.5rem;
+  min-width: 0;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 /* Notification dot */
@@ -698,6 +708,8 @@ button.user-summary-card {
   padding: 0;
   overflow: hidden;
   margin-top: 1.25rem;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .table-header {
@@ -717,6 +729,11 @@ button.user-summary-card {
 
 .table-scroll {
   overflow-x: auto;
+  max-width: 100%;
+}
+
+.table-scroll .data-table {
+  min-width: 980px;
 }
 
 .empty-state {
@@ -879,6 +896,7 @@ button.user-summary-card {
 
   .main-content {
     margin-left: 0;
+    width: 100%;
   }
 
   .topbar {

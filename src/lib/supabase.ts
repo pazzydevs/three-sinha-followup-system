@@ -80,6 +80,75 @@ export type Database = {
           updated_at?: string
         }
       }
+      edit_requests: {
+        Row: {
+          id: string
+          job_id: string
+          user_id: string
+          requested_column: string
+          message: string
+          status: 'pending' | 'approved' | 'rejected' | 'completed'
+          admin_response: string | null
+          approved_by: string | null
+          approved_at: string | null
+          completed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          job_id: string
+          user_id: string
+          requested_column: string
+          message: string
+          status?: 'pending' | 'approved' | 'rejected' | 'completed'
+          admin_response?: string | null
+          approved_by?: string | null
+          approved_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          requested_column?: string
+          message?: string
+          status?: 'pending' | 'approved' | 'rejected' | 'completed'
+          admin_response?: string | null
+          approved_by?: string | null
+          approved_at?: string | null
+          completed_at?: string | null
+          updated_at?: string
+        }
+      }
+      user_notifications: {
+        Row: {
+          id: string
+          user_id: string
+          title: string
+          message: string
+          type: string
+          related_request_id: string | null
+          read_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          title: string
+          message: string
+          type?: string
+          related_request_id?: string | null
+          read_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          title?: string
+          message?: string
+          type?: string
+          related_request_id?: string | null
+          read_at?: string | null
+        }
+      }
     }
   }
 }

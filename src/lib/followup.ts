@@ -1,4 +1,6 @@
 export type JobStatus = 'Positive' | 'Negative' | 'Pending'
+export type EditableJobColumn = 'date' | 'job_no' | 'cx_name' | 'contact_no' | 'job_amount' | 'amount_received' | 'received_date' | 'first_follow_up' | 'second_follow_up' | 'status' | 'action_require'
+export type EditRequestStatus = 'pending' | 'approved' | 'rejected' | 'completed'
 
 export type Profile = {
   id: string
@@ -46,8 +48,40 @@ export type UserSummary = {
   pendingCount: number
 }
 
+export type EditRequest = {
+  id: string
+  job_id: string
+  user_id: string
+  requested_column: EditableJobColumn
+  message: string
+  status: EditRequestStatus
+  admin_response: string | null
+  approved_by: string | null
+  approved_at: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type UserNotification = {
+  id: string
+  user_id: string
+  title: string
+  message: string
+  type: string
+  related_request_id: string | null
+  read_at: string | null
+  created_at: string
+}
+
 export function todayISO() {
   return new Date().toISOString().slice(0, 10)
+}
+
+export function addDaysISO(value: string, days: number) {
+  const date = new Date(`${value}T00:00:00`)
+  date.setDate(date.getDate() + days)
+  return date.toISOString().slice(0, 10)
 }
 
 export function formatMoney(value: number) {

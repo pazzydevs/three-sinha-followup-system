@@ -1,12 +1,16 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
   Job,
   JobStatus,
   Profile,
+  EditableJobColumn,
+  EditRequest,
+  UserNotification,
+  addDaysISO,
   buildUserSummaries,
   displayDate,
   formatMoney,
@@ -38,33 +42,83 @@ const emptyForm: JobForm = {
   job_amount: '',
   amount_received: '',
   received_date: todayISO(),
-  first_follow_up: '',
-  second_follow_up: '',
+  first_follow_up: todayISO(),
+  second_follow_up: addDaysISO(todayISO(), 7),
   status: 'Pending',
   action_require: 'NONE',
 }
 
 const compactViewStorageKey = 'three-sinha-dashboard-compact-view'
 
+const editableJobColumns: Array<{ value: EditableJobColumn; label: string }> = [
+  { value: 'date', label: 'Date' },
+  { value: 'job_no', label: 'Job No' },
+  { value: 'cx_name', label: 'Cx Name' },
+  { value: 'contact_no', label: 'Contact No' },
+  { value: 'job_amount', label: 'Job Amount' },
+  { value: 'amount_received', label: 'Amount Received' },
+  { value: 'received_date', label: 'Received Date' },
+  { value: 'first_follow_up', label: '1st Follow-up' },
+  { value: 'second_follow_up', label: '2nd Follow-up' },
+  { value: 'status', label: 'Status' },
+  { value: 'action_require', label: 'Action Required' },
+]
+
 function avatarColor(name: string) {
   const colors = ['#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed']
   return colors[name.charCodeAt(0) % colors.length]
+}
+
+function playNotificationSound() {
+  try {
+    const audioWindow = window as typeof window & { webkitAudioContext?: typeof AudioContext }
+    const AudioContextClass = window.AudioContext || audioWindow.webkitAudioContext
+    if (!AudioContextClass) return
+
+    const audioContext = new AudioContextClass()
+    const oscillator = audioContext.createOscillator()
+    const gain = audioContext.createGain()
+
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(740, audioContext.currentTime)
+    oscillator.frequency.exponentialRampToValueAtTime(980, audioContext.currentTime + 0.12)
+    gain.gain.setValueAtTime(0.001, audioContext.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.28)
+
+    oscillator.connect(gain)
+    gain.connect(audioContext.destination)
+    oscillator.start()
+    oscillator.stop(audioContext.currentTime + 0.3)
+  } catch {
+    // Browser autoplay settings can block sound until the user has interacted with the page.
+  }
 }
 
 export default function DashboardPage() {
   const router = useRouter()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [jobs, setJobs] = useState<Job[]>([])
+  const [editRequests, setEditRequests] = useState<EditRequest[]>([])
+  const [notifications, setNotifications] = useState<UserNotification[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'today' | 'all'>('today')
+  const [activeTab, setActiveTab] = useState<'today' | 'all' | 'notifications'>('today')
   const [filterDate, setFilterDate] = useState(todayISO())
   const [showModal, setShowModal] = useState(false)
   const [editJob, setEditJob] = useState<Job | null>(null)
+  const [activeEditRequest, setActiveEditRequest] = useState<EditRequest | null>(null)
+  const [requestJob, setRequestJob] = useState<Job | null>(null)
+  const [requestColumn, setRequestColumn] = useState<EditableJobColumn>('contact_no')
+  const [requestNote, setRequestNote] = useState('')
+  const [requestSaving, setRequestSaving] = useState(false)
+  const [requestFeedback, setRequestFeedback] = useState('')
   const [form, setForm] = useState<JobForm>(emptyForm)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [compactView, setCompactView] = useState(false)
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+  const notificationsLoadedRef = useRef(false)
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -120,10 +174,37 @@ export default function DashboardPage() {
     setJobs(((data || []) as Job[]).map(normalizeJob))
   }, [profile, activeTab, filterDate])
 
+  const loadRequests = useCallback(async () => {
+    if (!profile) return
+
+    const { data } = await supabase
+      .from('edit_requests')
+      .select('*')
+      .eq('user_id', profile.id)
+      .order('created_at', { ascending: false })
+
+    setEditRequests((data || []) as EditRequest[])
+  }, [profile])
+
+  const loadNotifications = useCallback(async () => {
+    if (!profile) return
+
+    const { data } = await supabase
+      .from('user_notifications')
+      .select('*')
+      .eq('user_id', profile.id)
+      .order('created_at', { ascending: false })
+
+    setNotifications((data || []) as UserNotification[])
+    notificationsLoadedRef.current = true
+  }, [profile])
+
   useEffect(() => {
     if (!profile) return
     queueMicrotask(() => {
       void loadJobs()
+      void loadRequests()
+      void loadNotifications()
     })
 
     const channel = supabase
@@ -134,12 +215,38 @@ export default function DashboardPage() {
         table: 'jobs',
         filter: `user_id=eq.${profile.id}`,
       }, loadJobs)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'edit_requests',
+        filter: `user_id=eq.${profile.id}`,
+      }, () => {
+        void loadRequests()
+        void loadNotifications()
+      })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'user_notifications',
+        filter: `user_id=eq.${profile.id}`,
+      }, () => {
+        if (notificationsLoadedRef.current) {
+          playNotificationSound()
+        }
+        void loadNotifications()
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'user_notifications',
+        filter: `user_id=eq.${profile.id}`,
+      }, loadNotifications)
       .subscribe()
 
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [profile, loadJobs])
+  }, [profile, loadJobs, loadNotifications, loadRequests])
 
   const summary = useMemo(() => {
     if (!profile) return null
@@ -151,15 +258,26 @@ export default function DashboardPage() {
     return summary ? [...summary.todayJobs, ...summary.carryForwardJobs] : []
   }, [activeTab, jobs, summary])
 
+  const unreadNotificationCount = notifications.filter((notification) => !notification.read_at).length
+  const pendingRequestCount = editRequests.filter((request) => request.status === 'pending').length
+
   const openAddModal = () => {
     setEditJob(null)
-    setForm({ ...emptyForm, date: filterDate, received_date: filterDate })
+    setActiveEditRequest(null)
+    setForm({
+      ...emptyForm,
+      date: filterDate,
+      received_date: filterDate,
+      first_follow_up: filterDate,
+      second_follow_up: addDaysISO(filterDate, 7),
+    })
     setFormError('')
     setShowModal(true)
   }
 
-  const openEditModal = (job: Job) => {
+  const openApprovedEditModal = (job: Job, request: EditRequest) => {
     setEditJob(job)
+    setActiveEditRequest(request)
     setForm({
       date: job.date,
       job_no: job.job_no,
@@ -175,6 +293,19 @@ export default function DashboardPage() {
     })
     setFormError('')
     setShowModal(true)
+  }
+
+  const openEditRequestModal = (job: Job) => {
+    const existingApproved = editRequests.find((request) => request.job_id === job.id && request.status === 'approved')
+    if (existingApproved) {
+      openApprovedEditModal(job, existingApproved)
+      return
+    }
+
+    setRequestJob(job)
+    setRequestColumn('contact_no')
+    setRequestNote('')
+    setRequestFeedback('')
   }
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -219,16 +350,69 @@ export default function DashboardPage() {
 
     setSaving(false)
     setShowModal(false)
+    setActiveEditRequest(null)
     await loadJobs()
+    await loadRequests()
+    await loadNotifications()
   }
 
-  const handleDelete = async (id: string) => {
-    await supabase.from('jobs').delete().eq('id', id)
-    setDeleteConfirm(null)
-    await loadJobs()
+  const handleEditRequestSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!profile || !requestJob) return
+
+    setRequestSaving(true)
+    setRequestFeedback('')
+
+    const cleanNote = requestNote.trim()
+    if (cleanNote.length < 3) {
+      setRequestFeedback('Please add a short reason for the edit request.')
+      setRequestSaving(false)
+      return
+    }
+
+    const { error } = await supabase.from('edit_requests').insert({
+      job_id: requestJob.id,
+      user_id: profile.id,
+      requested_column: requestColumn,
+      message: cleanNote,
+    })
+
+    if (error) {
+      setRequestFeedback(error.message)
+      setRequestSaving(false)
+      return
+    }
+
+    setRequestSaving(false)
+    setRequestJob(null)
+    await loadRequests()
+  }
+
+  const markNotificationRead = async (notification: UserNotification) => {
+    if (notification.read_at) return
+
+    await supabase
+      .from('user_notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', notification.id)
+    await loadNotifications()
+  }
+
+  const handleNotificationAction = async (notification: UserNotification) => {
+    await markNotificationRead(notification)
+
+    if (!notification.related_request_id) return
+    const request = editRequests.find((item) => item.id === notification.related_request_id)
+    if (!request || request.status !== 'approved') return
+
+    const job = jobs.find((item) => item.id === request.job_id)
+    if (job) {
+      openApprovedEditModal(job, request)
+    }
   }
 
   const handleLogout = async () => {
+    setLoggingOut(true)
     await supabase.auth.signOut()
     router.push('/login')
   }
@@ -275,10 +459,14 @@ export default function DashboardPage() {
           <button className={`sidebar-nav-item ${activeTab === 'all' ? 'active' : ''}`} onClick={() => setActiveTab('all')}>
             All Jobs
           </button>
+          <button className={`sidebar-nav-item ${activeTab === 'notifications' ? 'active' : ''}`} onClick={() => setActiveTab('notifications')}>
+            <span>Notifications</span>
+            {unreadNotificationCount > 0 && <span className="nav-count">{unreadNotificationCount}</span>}
+          </button>
         </nav>
 
         <div className="sidebar-footer">
-          <button className="btn-secondary" onClick={handleLogout}>Sign Out</button>
+          <button className="btn-secondary" onClick={() => setShowLogoutConfirm(true)}>Sign Out</button>
         </div>
       </aside>
 
@@ -297,6 +485,7 @@ export default function DashboardPage() {
               />
               <span>Compact view</span>
             </label>
+            {pendingRequestCount > 0 && <span className="badge badge-pending">{pendingRequestCount} edit pending</span>}
             {activeTab === 'today' && (
               <input className="form-input compact-input" type="date" value={filterDate} onChange={(event) => setFilterDate(event.target.value)} />
             )}
@@ -321,10 +510,8 @@ export default function DashboardPage() {
                 title={`Jobs and carry-forward for ${displayDate(filterDate)}`}
                 jobs={allDisplayJobs}
                 reportDate={filterDate}
-                onEdit={openEditModal}
-                onDelete={handleDelete}
-                deleteConfirm={deleteConfirm}
-                setDeleteConfirm={setDeleteConfirm}
+                onEdit={openEditRequestModal}
+                editRequests={editRequests}
               />
             </>
           )}
@@ -334,10 +521,18 @@ export default function DashboardPage() {
               title="All Jobs History"
               jobs={allDisplayJobs}
               reportDate={filterDate}
-              onEdit={openEditModal}
-              onDelete={handleDelete}
-              deleteConfirm={deleteConfirm}
-              setDeleteConfirm={setDeleteConfirm}
+              onEdit={openEditRequestModal}
+              editRequests={editRequests}
+            />
+          )}
+
+          {activeTab === 'notifications' && (
+            <NotificationsPanel
+              notifications={notifications}
+              editRequests={editRequests}
+              jobs={jobs}
+              onAction={handleNotificationAction}
+              onMarkRead={markNotificationRead}
             />
           )}
         </div>
@@ -350,8 +545,37 @@ export default function DashboardPage() {
           setForm={setForm}
           formError={formError}
           saving={saving}
-          onClose={() => setShowModal(false)}
+          allowedColumn={activeEditRequest?.requested_column || null}
+          onClose={() => {
+            setShowModal(false)
+            setActiveEditRequest(null)
+          }}
           onSubmit={handleSubmit}
+        />
+      )}
+
+      {requestJob && (
+        <EditRequestModal
+          job={requestJob}
+          column={requestColumn}
+          setColumn={setRequestColumn}
+          note={requestNote}
+          setNote={setRequestNote}
+          feedback={requestFeedback}
+          saving={requestSaving}
+          onClose={() => setRequestJob(null)}
+          onSubmit={handleEditRequestSubmit}
+        />
+      )}
+
+      {showLogoutConfirm && (
+        <ConfirmDialog
+          title="Sign out?"
+          message="You will be returned to the login screen."
+          confirmLabel={loggingOut ? 'Signing out...' : 'Yes, sign out'}
+          onCancel={() => setShowLogoutConfirm(false)}
+          onConfirm={handleLogout}
+          disabled={loggingOut}
         />
       )}
     </div>
@@ -372,17 +596,13 @@ function JobTable({
   jobs,
   reportDate,
   onEdit,
-  onDelete,
-  deleteConfirm,
-  setDeleteConfirm,
+  editRequests,
 }: {
   title: string
   jobs: Job[]
   reportDate: string
   onEdit: (job: Job) => void
-  onDelete: (id: string) => void
-  deleteConfirm: string | null
-  setDeleteConfirm: (id: string | null) => void
+  editRequests: EditRequest[]
 }) {
   return (
     <div className="glass-card table-card">
@@ -416,6 +636,8 @@ function JobTable({
             <tbody>
               {jobs.map((job) => {
                 const action = getActionStatus(job, reportDate)
+                const approvedRequest = editRequests.find((request) => request.job_id === job.id && request.status === 'approved')
+                const pendingRequest = editRequests.find((request) => request.job_id === job.id && request.status === 'pending')
                 return (
                   <tr key={job.id}>
                     <td>{displayDate(job.date)}</td>
@@ -432,15 +654,9 @@ function JobTable({
                     <td><span className={`badge ${action === 'OVERDUE' ? 'badge-overdue' : 'badge-none'}`}>{action}</span></td>
                     <td>
                       <div className="button-row compact">
-                        <button className="btn-secondary icon-btn" onClick={() => onEdit(job)} title="Edit job">Edit</button>
-                        {deleteConfirm === job.id ? (
-                          <>
-                            <button className="btn-danger icon-btn" onClick={() => onDelete(job.id)}>Yes</button>
-                            <button className="btn-secondary icon-btn" onClick={() => setDeleteConfirm(null)}>No</button>
-                          </>
-                        ) : (
-                          <button className="btn-danger icon-btn" onClick={() => setDeleteConfirm(job.id)} title="Delete job">Delete</button>
-                        )}
+                        <button className="btn-secondary icon-btn" onClick={() => onEdit(job)} disabled={Boolean(pendingRequest && !approvedRequest)}>
+                          {approvedRequest ? 'Edit' : pendingRequest ? 'Pending' : 'Request'}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -460,6 +676,7 @@ function JobModal({
   setForm,
   formError,
   saving,
+  allowedColumn,
   onClose,
   onSubmit,
 }: {
@@ -468,41 +685,56 @@ function JobModal({
   setForm: (form: JobForm) => void
   formError: string
   saving: boolean
+  allowedColumn: EditableJobColumn | null
   onClose: () => void
   onSubmit: (event: React.FormEvent) => void
 }) {
   const remaining = Math.max(0, Number(form.job_amount || 0) - Number(form.amount_received || 0))
+  const canEdit = (column: EditableJobColumn) => !editJob || allowedColumn === column
+
+  const handleDateChange = (date: string) => {
+    setForm({
+      ...form,
+      date,
+      first_follow_up: editJob ? form.first_follow_up : date,
+      second_follow_up: editJob ? form.second_follow_up : addDaysISO(date, 7),
+    })
+  }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box" onClick={(event) => event.stopPropagation()}>
         <div className="section-header">
-          <h2>{editJob ? 'Edit Job' : 'Add Job'}</h2>
+          <h2>{editJob ? 'Approved Job Edit' : 'Add Job'}</h2>
           <button className="btn-secondary icon-btn" onClick={onClose}>Close</button>
         </div>
+
+        {editJob && allowedColumn && (
+          <div className="alert success">Admin approved editing only: {editableJobColumns.find((column) => column.value === allowedColumn)?.label}</div>
+        )}
 
         {formError && <div className="alert error">{formError}</div>}
 
         <form onSubmit={onSubmit}>
           <div className="grid-2">
-            <Field label="Date"><input className="form-input" type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} required /></Field>
-            <Field label="Job No"><input className="form-input" value={form.job_no} onChange={(event) => setForm({ ...form, job_no: event.target.value })} required /></Field>
-            <Field label="Cx Name"><input className="form-input" value={form.cx_name} onChange={(event) => setForm({ ...form, cx_name: event.target.value })} required /></Field>
-            <Field label="Contact No"><input className="form-input" value={form.contact_no} onChange={(event) => setForm({ ...form, contact_no: event.target.value })} required /></Field>
-            <Field label="Job Amount"><input className="form-input" type="number" min="0" step="0.01" value={form.job_amount} onChange={(event) => setForm({ ...form, job_amount: event.target.value })} required /></Field>
-            <Field label="Amount Received"><input className="form-input" type="number" min="0" step="0.01" value={form.amount_received} onChange={(event) => setForm({ ...form, amount_received: event.target.value })} /></Field>
-            <Field label="Received Date"><input className="form-input" type="date" value={form.received_date} onChange={(event) => setForm({ ...form, received_date: event.target.value })} /></Field>
-            <Field label="1st Follow-up"><input className="form-input" type="date" value={form.first_follow_up} onChange={(event) => setForm({ ...form, first_follow_up: event.target.value })} /></Field>
-            <Field label="2nd Follow-up"><input className="form-input" type="date" value={form.second_follow_up} onChange={(event) => setForm({ ...form, second_follow_up: event.target.value })} /></Field>
+            <Field label="Date"><input className="form-input" type="date" value={form.date} onChange={(event) => handleDateChange(event.target.value)} required disabled={!canEdit('date')} /></Field>
+            <Field label="Job No"><input className="form-input" value={form.job_no} onChange={(event) => setForm({ ...form, job_no: event.target.value })} required disabled={!canEdit('job_no')} /></Field>
+            <Field label="Cx Name"><input className="form-input" value={form.cx_name} onChange={(event) => setForm({ ...form, cx_name: event.target.value })} required disabled={!canEdit('cx_name')} /></Field>
+            <Field label="Contact No"><input className="form-input" value={form.contact_no} onChange={(event) => setForm({ ...form, contact_no: event.target.value })} required disabled={!canEdit('contact_no')} /></Field>
+            <Field label="Job Amount"><input className="form-input" type="number" min="0" step="0.01" value={form.job_amount} onChange={(event) => setForm({ ...form, job_amount: event.target.value })} required disabled={!canEdit('job_amount')} /></Field>
+            <Field label="Amount Received"><input className="form-input" type="number" min="0" step="0.01" value={form.amount_received} onChange={(event) => setForm({ ...form, amount_received: event.target.value })} disabled={!canEdit('amount_received')} /></Field>
+            <Field label="Received Date"><input className="form-input" type="date" value={form.received_date} onChange={(event) => setForm({ ...form, received_date: event.target.value })} disabled={!canEdit('received_date')} /></Field>
+            <Field label="1st Follow-up"><input className="form-input" type="date" value={form.first_follow_up} onChange={(event) => setForm({ ...form, first_follow_up: event.target.value })} disabled={!canEdit('first_follow_up')} /></Field>
+            <Field label="2nd Follow-up"><input className="form-input" type="date" value={form.second_follow_up} onChange={(event) => setForm({ ...form, second_follow_up: event.target.value })} disabled={!canEdit('second_follow_up')} /></Field>
             <Field label="Status">
-              <select className="form-input" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as JobStatus })}>
+              <select className="form-input" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as JobStatus })} disabled={!canEdit('status')}>
                 <option value="Pending">Pending</option>
                 <option value="Positive">Positive</option>
                 <option value="Negative">Negative</option>
               </select>
             </Field>
             <Field label="Action Required">
-              <select className="form-input" value={form.action_require} onChange={(event) => setForm({ ...form, action_require: event.target.value })}>
+              <select className="form-input" value={form.action_require} onChange={(event) => setForm({ ...form, action_require: event.target.value })} disabled={!canEdit('action_require')}>
                 <option value="NONE">NONE</option>
                 <option value="CALL">CALL</option>
                 <option value="VISIT">VISIT</option>
@@ -523,6 +755,144 @@ function JobModal({
             <button className="btn-primary" disabled={saving}>{saving ? 'Saving...' : editJob ? 'Update Job' : 'Add Job'}</button>
           </div>
         </form>
+      </div>
+    </div>
+  )
+}
+
+function EditRequestModal({
+  job,
+  column,
+  setColumn,
+  note,
+  setNote,
+  feedback,
+  saving,
+  onClose,
+  onSubmit,
+}: {
+  job: Job
+  column: EditableJobColumn
+  setColumn: (column: EditableJobColumn) => void
+  note: string
+  setNote: (note: string) => void
+  feedback: string
+  saving: boolean
+  onClose: () => void
+  onSubmit: (event: React.FormEvent) => void
+}) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box small-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="section-header">
+          <h2>Request Job Edit</h2>
+          <button className="btn-secondary icon-btn" onClick={onClose}>Close</button>
+        </div>
+        <div className="request-summary">
+          <strong>{job.job_no}</strong>
+          <span>{job.cx_name}</span>
+        </div>
+        {feedback && <div className="alert error">{feedback}</div>}
+        <form onSubmit={onSubmit}>
+          <Field label="Column to edit">
+            <select className="form-input" value={column} onChange={(event) => setColumn(event.target.value as EditableJobColumn)}>
+              {editableJobColumns.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Message to admin">
+            <textarea
+              className="form-input textarea-input"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Explain what needs to be corrected and why."
+              required
+            />
+          </Field>
+          <div className="button-row end">
+            <button className="btn-secondary" type="button" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" disabled={saving}>{saving ? 'Sending...' : 'Send Request'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function NotificationsPanel({
+  notifications,
+  editRequests,
+  jobs,
+  onAction,
+  onMarkRead,
+}: {
+  notifications: UserNotification[]
+  editRequests: EditRequest[]
+  jobs: Job[]
+  onAction: (notification: UserNotification) => void
+  onMarkRead: (notification: UserNotification) => void
+}) {
+  if (notifications.length === 0) {
+    return <div className="glass-card empty-state">No notifications yet.</div>
+  }
+
+  return (
+    <section className="narrow-panel">
+      <h2 className="section-title">Notifications</h2>
+      <div className="notification-list">
+        {notifications.map((notification) => {
+          const request = notification.related_request_id
+            ? editRequests.find((item) => item.id === notification.related_request_id)
+            : null
+          const job = request ? jobs.find((item) => item.id === request.job_id) : null
+          const canApply = request?.status === 'approved' && Boolean(job)
+
+          return (
+            <div key={notification.id} className={`glass-card notification-card ${notification.read_at ? '' : 'unread'}`}>
+              <div>
+                <strong>{notification.title}</strong>
+                <p>{notification.message}</p>
+                {request && (
+                  <span className="muted-text">Field: {editableJobColumns.find((item) => item.value === request.requested_column)?.label}</span>
+                )}
+              </div>
+              <div className="button-row compact">
+                {canApply && <button className="btn-primary icon-btn" onClick={() => onAction(notification)}>Apply edit</button>}
+                {!notification.read_at && <button className="btn-secondary icon-btn" onClick={() => onMarkRead(notification)}>Read</button>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  disabled,
+  onCancel,
+  onConfirm,
+}: {
+  title: string
+  message: string
+  confirmLabel: string
+  disabled: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-box confirm-box" onClick={(event) => event.stopPropagation()}>
+        <h2>{title}</h2>
+        <p>{message}</p>
+        <div className="button-row end">
+          <button className="btn-secondary" onClick={onCancel} disabled={disabled}>No</button>
+          <button className="btn-danger" onClick={onConfirm} disabled={disabled}>{confirmLabel}</button>
+        </div>
       </div>
     </div>
   )

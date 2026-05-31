@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
+  EditRequest,
   Job,
   Profile,
   UserSummary,
@@ -26,7 +27,7 @@ type N8nConfig = {
   enabled: boolean
 }
 
-type AdminTab = 'overview' | 'users' | 'report' | 'n8n'
+type AdminTab = 'overview' | 'users' | 'inquiries' | 'report' | 'n8n'
 
 const defaultN8nConfig: N8nConfig = {
   webhookUrl: process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || '',
@@ -48,6 +49,7 @@ function avatarColor(name: string) {
 function getAdminTitle(tab: AdminTab) {
   if (tab === 'overview') return 'Company Overview'
   if (tab === 'users') return 'Manage Users'
+  if (tab === 'inquiries') return 'User Inquiries'
   if (tab === 'n8n') return 'n8n Configuration'
   return 'Daily Report'
 }
@@ -57,11 +59,56 @@ function isSuccessMessage(message: string) {
   return lower.includes('success') || lower.includes('saved')
 }
 
+function inquiryColumnLabel(column: string) {
+  const labels: Record<string, string> = {
+    date: 'Date',
+    job_no: 'Job No',
+    cx_name: 'Cx Name',
+    contact_no: 'Contact No',
+    job_amount: 'Job Amount',
+    amount_received: 'Amount Received',
+    received_date: 'Received Date',
+    first_follow_up: '1st Follow-up',
+    second_follow_up: '2nd Follow-up',
+    status: 'Status',
+    action_require: 'Action Required',
+  }
+
+  return labels[column] || column
+}
+
+function playNotificationSound() {
+  try {
+    const audioWindow = window as typeof window & { webkitAudioContext?: typeof AudioContext }
+    const AudioContextClass = window.AudioContext || audioWindow.webkitAudioContext
+    if (!AudioContextClass) return
+
+    const audioContext = new AudioContextClass()
+    const oscillator = audioContext.createOscillator()
+    const gain = audioContext.createGain()
+
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(620, audioContext.currentTime)
+    oscillator.frequency.exponentialRampToValueAtTime(900, audioContext.currentTime + 0.16)
+    gain.gain.setValueAtTime(0.001, audioContext.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.28)
+
+    oscillator.connect(gain)
+    gain.connect(audioContext.destination)
+    oscillator.start()
+    oscillator.stop(audioContext.currentTime + 0.3)
+  } catch {
+    // Browser autoplay settings can block sound until the user interacts with the page.
+  }
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [adminProfile, setAdminProfile] = useState<Profile | null>(null)
   const [users, setUsers] = useState<Profile[]>([])
   const [allJobs, setAllJobs] = useState<Job[]>([])
+  const [editRequests, setEditRequests] = useState<EditRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<AdminTab>('overview')
   const [reportDate, setReportDate] = useState(todayISO())
@@ -85,6 +132,10 @@ export default function AdminPage() {
   const [testingN8n, setTestingN8n] = useState(false)
   const [n8nConfigMessage, setN8nConfigMessage] = useState('')
   const [compactView, setCompactView] = useState(false)
+  const [adminResponses, setAdminResponses] = useState<Record<string, string>>({})
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [inquiriesLoaded, setInquiriesLoaded] = useState(false)
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -130,6 +181,18 @@ export default function AdminPage() {
     setAllJobs(((jobs || []) as Job[]).map(normalizeJob))
   }, [adminProfile, reportDate])
 
+  const loadEditRequests = useCallback(async () => {
+    if (!adminProfile) return
+
+    const { data } = await supabase
+      .from('edit_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    setEditRequests((data || []) as EditRequest[])
+    setInquiriesLoaded(true)
+  }, [adminProfile])
+
   const loadN8nConfig = useCallback(async () => {
     const storedConfig = window.localStorage.getItem(n8nStorageKey)
     if (storedConfig) {
@@ -157,6 +220,7 @@ export default function AdminPage() {
     if (!adminProfile) return
     queueMicrotask(() => {
       void loadData()
+      void loadEditRequests()
       void loadN8nConfig()
     })
 
@@ -164,12 +228,18 @@ export default function AdminPage() {
       .channel('admin-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'edit_requests' }, (payload) => {
+        if (payload.eventType === 'INSERT' && inquiriesLoaded) {
+          playNotificationSound()
+        }
+        void loadEditRequests()
+      })
       .subscribe()
 
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [adminProfile, loadData, loadN8nConfig])
+  }, [adminProfile, inquiriesLoaded, loadData, loadEditRequests, loadN8nConfig])
 
   const summaries = useMemo(() => buildUserSummaries(users, allJobs, reportDate), [users, allJobs, reportDate])
   const selectedSummary = summaries.find((summary) => summary.profile.id === selectedUserId) || null
@@ -183,6 +253,7 @@ export default function AdminPage() {
     followUps: summaries.reduce((sum, user) => sum + user.followUpsToday.length, 0),
     overdue: summaries.reduce((sum, user) => sum + user.overdueCount, 0),
   }), [summaries])
+  const pendingInquiryCount = editRequests.filter((request) => request.status === 'pending').length
 
   const handlePreviewReport = () => {
     setReportPreview(buildReportPayload(summaries, reportDate).reportText)
@@ -434,7 +505,43 @@ export default function AdminPage() {
     }
   }
 
+  const handleInquiryDecision = async (request: EditRequest, status: 'approved' | 'rejected') => {
+    if (!adminProfile) return
+
+    const response = (adminResponses[request.id] || '').trim()
+    const job = allJobs.find((item) => item.id === request.job_id)
+    const fieldLabel = inquiryColumnLabel(request.requested_column)
+    const title = status === 'approved' ? 'Edit request approved' : 'Edit request rejected'
+    const message = status === 'approved'
+      ? `You can now edit ${fieldLabel} for job ${job?.job_no || 'your job'}.`
+      : `Your edit request for ${fieldLabel} on job ${job?.job_no || 'your job'} was rejected.${response ? ` ${response}` : ''}`
+
+    const { error } = await supabase
+      .from('edit_requests')
+      .update({
+        status,
+        admin_response: response || null,
+        approved_by: status === 'approved' ? adminProfile.id : null,
+        approved_at: status === 'approved' ? new Date().toISOString() : null,
+      })
+      .eq('id', request.id)
+
+    if (error) return
+
+    await supabase.from('user_notifications').insert({
+      user_id: request.user_id,
+      title,
+      message,
+      type: status === 'approved' ? 'edit_approved' : 'edit_rejected',
+      related_request_id: request.id,
+    })
+
+    setAdminResponses((current) => ({ ...current, [request.id]: '' }))
+    await loadEditRequests()
+  }
+
   const handleLogout = async () => {
+    setLoggingOut(true)
     await supabase.auth.signOut()
     router.push('/login')
   }
@@ -476,6 +583,7 @@ export default function AdminPage() {
           {[
             { key: 'overview', label: 'Overview' },
             { key: 'users', label: 'Manage Users' },
+            { key: 'inquiries', label: 'User Inquiries' },
             { key: 'report', label: 'Daily Report' },
             { key: 'n8n', label: 'n8n Configuration' },
           ].map((item) => (
@@ -484,13 +592,14 @@ export default function AdminPage() {
               className={`sidebar-nav-item ${activeTab === item.key ? 'active' : ''}`}
               onClick={() => setActiveTab(item.key as typeof activeTab)}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.key === 'inquiries' && pendingInquiryCount > 0 && <span className="nav-count">{pendingInquiryCount}</span>}
             </button>
           ))}
         </nav>
 
         <div className="sidebar-footer">
-          <button className="btn-secondary" onClick={handleLogout}>Sign Out</button>
+          <button className="btn-secondary" onClick={() => setShowLogoutConfirm(true)}>Sign Out</button>
         </div>
       </aside>
 
@@ -654,6 +763,57 @@ export default function AdminPage() {
             </section>
           )}
 
+          {activeTab === 'inquiries' && (
+            <section className="narrow-panel wide">
+              <div className="section-header">
+                <h2>User edit requests</h2>
+                <span className="badge badge-pending">{pendingInquiryCount} pending</span>
+              </div>
+
+              {editRequests.length === 0 ? (
+                <div className="glass-card empty-state">No user inquiries yet.</div>
+              ) : (
+                <div className="inquiry-list">
+                  {editRequests.map((request) => {
+                    const job = allJobs.find((item) => item.id === request.job_id)
+                    const user = users.find((item) => item.id === request.user_id)
+
+                    return (
+                      <div key={request.id} className={`glass-card inquiry-card ${request.status}`}>
+                        <div className="inquiry-topline">
+                          <div>
+                            <strong>{user?.username || 'User'} requested {inquiryColumnLabel(request.requested_column)}</strong>
+                            <p>{job ? `${job.job_no} - ${job.cx_name}` : 'Job details unavailable'}</p>
+                          </div>
+                          <span className={`badge badge-${request.status === 'approved' ? 'positive' : request.status === 'rejected' ? 'negative' : request.status === 'completed' ? 'none' : 'pending'}`}>
+                            {request.status}
+                          </span>
+                        </div>
+                        <p className="inquiry-message">{request.message}</p>
+                        {request.admin_response && <p className="muted-text">Admin note: {request.admin_response}</p>}
+
+                        {request.status === 'pending' && (
+                          <div className="inquiry-actions">
+                            <textarea
+                              className="form-input textarea-input"
+                              value={adminResponses[request.id] || ''}
+                              onChange={(event) => setAdminResponses({ ...adminResponses, [request.id]: event.target.value })}
+                              placeholder="Optional message back to the user"
+                            />
+                            <div className="button-row end">
+                              <button className="btn-secondary" onClick={() => handleInquiryDecision(request, 'rejected')}>Reject</button>
+                              <button className="btn-primary" onClick={() => handleInquiryDecision(request, 'approved')}>Approve Edit</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
           {activeTab === 'n8n' && (
             <section className="narrow-panel wide">
               <div className="glass-card form-card">
@@ -776,6 +936,17 @@ export default function AdminPage() {
           )}
         </div>
       </main>
+
+      {showLogoutConfirm && (
+        <ConfirmDialog
+          title="Sign out?"
+          message="You will be returned to the login screen."
+          confirmLabel={loggingOut ? 'Signing out...' : 'Yes, sign out'}
+          disabled={loggingOut}
+          onCancel={() => setShowLogoutConfirm(false)}
+          onConfirm={handleLogout}
+        />
+      )}
     </div>
   )
 }
@@ -865,6 +1036,35 @@ function JobList({ title, jobs }: { title: string; jobs: Job[] }) {
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  disabled,
+  onCancel,
+  onConfirm,
+}: {
+  title: string
+  message: string
+  confirmLabel: string
+  disabled: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal-box confirm-box" onClick={(event) => event.stopPropagation()}>
+        <h2>{title}</h2>
+        <p>{message}</p>
+        <div className="button-row end">
+          <button className="btn-secondary" onClick={onCancel} disabled={disabled}>No</button>
+          <button className="btn-danger" onClick={onConfirm} disabled={disabled}>{confirmLabel}</button>
+        </div>
+      </div>
     </div>
   )
 }

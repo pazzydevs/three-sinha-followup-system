@@ -61,7 +61,6 @@ const editableJobColumns: Array<{ value: EditableJobColumn; label: string }> = [
   { value: 'first_follow_up', label: '1st Follow-up' },
   { value: 'second_follow_up', label: '2nd Follow-up' },
   { value: 'status', label: 'Status' },
-  { value: 'action_require', label: 'Action Required' },
 ]
 
 function avatarColor(name: string) {
@@ -112,6 +111,7 @@ export default function DashboardPage() {
   const [requestNote, setRequestNote] = useState('')
   const [requestSaving, setRequestSaving] = useState(false)
   const [requestFeedback, setRequestFeedback] = useState('')
+  const [requestSuccess, setRequestSuccess] = useState('')
   const [form, setForm] = useState<JobForm>(emptyForm)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
@@ -289,6 +289,7 @@ export default function DashboardPage() {
     setRequestColumn('contact_no')
     setRequestNote('')
     setRequestFeedback('')
+    setRequestSuccess('')
   }
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -333,6 +334,17 @@ export default function DashboardPage() {
 
     setSaving(false)
     setShowModal(false)
+    if (activeEditRequest) {
+      const { data: session } = await supabase.auth.getSession()
+      await fetch('/api/edit-workflow', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.session?.access_token || ''}`,
+        },
+        body: JSON.stringify({ action: 'complete', requestId: activeEditRequest.id }),
+      })
+    }
     setActiveEditRequest(null)
     await loadJobs()
     await loadRequests()
@@ -377,6 +389,7 @@ export default function DashboardPage() {
 
     setRequestSaving(false)
     setRequestJob(null)
+    setRequestSuccess('Edit request sent to admin successfully.')
     await loadRequests()
   }
 
@@ -491,6 +504,8 @@ export default function DashboardPage() {
         </header>
 
         <div className="page-content">
+          {requestSuccess && <div className="alert success">{requestSuccess}</div>}
+
           {activeTab === 'today' && (
             <>
               <div className="grid-4">

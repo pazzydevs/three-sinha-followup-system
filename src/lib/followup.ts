@@ -59,6 +59,7 @@ export type EditRequest = {
   approved_by: string | null
   approved_at: string | null
   completed_at: string | null
+  read_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -120,6 +121,17 @@ export function normalizeJob<T extends Partial<Job>>(job: T): T & Job {
 }
 
 export function getActionStatus(job: Pick<Job, 'action_require' | 'first_follow_up' | 'second_follow_up' | 'status' | 'remaining_amount'>, asOfDate = todayISO()) {
+  if (job.action_require?.startsWith('EDIT_REQUEST:')) {
+    try {
+      const request = JSON.parse(decodeURIComponent(job.action_require.slice('EDIT_REQUEST:'.length))) as { status?: string }
+      if (request.status === 'approved') return 'EDIT APPROVED'
+      if (request.status === 'rejected') return 'EDIT REJECTED'
+      return 'EDIT PENDING'
+    } catch {
+      return 'EDIT PENDING'
+    }
+  }
+
   if (job.remaining_amount <= 0 || job.status === 'Positive') {
     return job.action_require && job.action_require !== 'OVERDUE' ? job.action_require : 'NONE'
   }

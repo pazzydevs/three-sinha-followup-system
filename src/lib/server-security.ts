@@ -32,9 +32,12 @@ type Database = {
           user_id: string
           job_no: string
           cx_name: string
+          action_require: string
         }
         Insert: Record<string, never>
-        Update: Record<string, never>
+        Update: {
+          action_require?: string
+        }
         Relationships: []
       }
       app_settings: {

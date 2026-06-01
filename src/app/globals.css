@@ -460,6 +460,10 @@ select.form-input option { background: #1e293b; color: var(--text-primary); }
   transition: all 0.2s ease;
 }
 .user-summary-card:hover { border-color: var(--border-hover); transform: translateY(-1px); }
+.user-summary-card.selected {
+  border-color: rgba(147, 197, 253, 0.85);
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.32), var(--shadow-card);
+}
 
 /* Progress bar */
 .progress-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
@@ -718,6 +722,77 @@ button.user-summary-card {
 .compact-job span {
   color: var(--text-secondary);
   font-size: 0.75rem;
+}
+
+.card-action-hint {
+  margin-top: 0.9rem;
+  color: #93c5fd;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.admin-user-detail {
+  margin-top: 1rem;
+  padding: 1.25rem;
+}
+
+.admin-user-detail .section-header {
+  align-items: flex-start;
+}
+
+.admin-user-detail h2 {
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.user-detail-grid,
+.followup-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+}
+
+.detail-table-block {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-top: 1rem;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.table-header.compact-header {
+  padding: 0.85rem 1rem;
+}
+
+.table-header.compact-header h3 {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.detail-table {
+  min-width: 980px;
+}
+
+.compact-empty {
+  padding: 1.25rem;
+}
+
+.followup-hero {
+  padding: 1.25rem;
+  display: grid;
+  grid-template-columns: 1fr minmax(280px, 420px);
+  gap: 1rem;
+  align-items: center;
+}
+
+.followup-hero h2 {
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  font-weight: 800;
+  margin-top: 0.2rem;
 }
 
 .narrow-panel {
@@ -1157,6 +1232,20 @@ button.user-summary-card {
   font-size: 0.78rem;
 }
 
+.compact-work-view .card-action-hint {
+  font-size: 0.68rem;
+  margin-top: 0.65rem;
+}
+
+.compact-work-view .admin-user-detail,
+.compact-work-view .followup-hero {
+  padding: 1rem;
+}
+
+.compact-work-view .followup-hero h2 {
+  font-size: 0.95rem;
+}
+
 .compact-work-view .table-card {
   margin-top: 0.9rem;
 }
@@ -1288,6 +1377,10 @@ button.user-summary-card {
   }
 
   .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .followup-hero {
     grid-template-columns: 1fr;
   }
 

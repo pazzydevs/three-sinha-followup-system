@@ -16,6 +16,10 @@ type CreateUserBody = {
   email: unknown
 }
 
+function isMissingEmailColumn(message: string) {
+  return message.includes("'email' column") || message.includes('column "email"')
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await readJsonBody<CreateUserBody>(req)
@@ -51,7 +55,17 @@ export async function POST(req: NextRequest) {
         .upsert({ id: authData.user.id, username: cleanUsername, email, role: 'user' }, { onConflict: 'id' })
 
       if (insertProfileError) {
-        return securityError(insertProfileError.message, 500)
+        if (!isMissingEmailColumn(insertProfileError.message)) {
+          return securityError(insertProfileError.message, 500)
+        }
+
+        const { error: fallbackProfileError } = await admin.supabaseAdmin
+          .from('profiles')
+          .upsert({ id: authData.user.id, username: cleanUsername, role: 'user' }, { onConflict: 'id' })
+
+        if (fallbackProfileError) {
+          return securityError(fallbackProfileError.message, 500)
+        }
       }
     }
 

@@ -77,6 +77,14 @@ function inquiryColumnLabel(column: string) {
   return labels[column] || column
 }
 
+function statusBadgeClass(status: string) {
+  const normalized = status.toLowerCase()
+  if (normalized === 'positive') return 'badge-positive'
+  if (normalized === 'negative') return 'badge-negative'
+  if (normalized === 'pending') return 'badge-pending'
+  return 'badge-none'
+}
+
 function playNotificationSound() {
   try {
     const audioWindow = window as typeof window & { webkitAudioContext?: typeof AudioContext }
@@ -628,16 +636,26 @@ export default function AdminPage() {
               {summaries.length === 0 ? (
                 <div className="glass-card empty-state">No staff accounts found.</div>
               ) : (
-                <div className="summary-grid">
-                  {summaries.map((summary) => (
-                    <StaffSummaryCard
-                      key={summary.profile.id}
-                      summary={summary}
-                      selected={selectedSummary?.profile.id === summary.profile.id}
-                      onSelect={() => setSelectedUserId(selectedSummary?.profile.id === summary.profile.id ? null : summary.profile.id)}
+                <>
+                  <div className="summary-grid">
+                    {summaries.map((summary) => (
+                      <StaffSummaryCard
+                        key={summary.profile.id}
+                        summary={summary}
+                        selected={selectedSummary?.profile.id === summary.profile.id}
+                        onSelect={() => setSelectedUserId(selectedSummary?.profile.id === summary.profile.id ? null : summary.profile.id)}
+                      />
+                    ))}
+                  </div>
+
+                  {selectedSummary && (
+                    <AdminUserDetail
+                      summary={selectedSummary}
+                      reportDate={reportDate}
+                      onClose={() => setSelectedUserId(null)}
                     />
-                  ))}
-                </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -972,7 +990,7 @@ function CompanyStats({ totals, compact = false }: { totals: { jobs: number; exp
 
 function StaffSummaryCard({ summary, selected, onSelect }: { summary: UserSummary; selected: boolean; onSelect: () => void }) {
   return (
-    <button className="user-summary-card" onClick={onSelect}>
+    <button className={`user-summary-card ${selected ? 'selected' : ''}`} onClick={onSelect}>
       <div className="card-topline">
         <div className="identity-cell">
           <div className="avatar" style={{ background: avatarColor(summary.profile.username) }}>
@@ -995,12 +1013,7 @@ function StaffSummaryCard({ summary, selected, onSelect }: { summary: UserSummar
         <Metric label="Pending" value={String(summary.pendingCount)} />
       </div>
 
-      {selected && (
-        <div className="expanded-list">
-          <JobList title="New jobs today" jobs={summary.todayJobs} />
-          <JobList title="Carry-forward jobs" jobs={summary.carryForwardJobs} />
-        </div>
-      )}
+      <div className="card-action-hint">{selected ? 'Viewing details' : 'Click to view jobs and performance'}</div>
     </button>
   )
 }
@@ -1014,24 +1027,88 @@ function Metric({ label, value, good = false, danger = false }: { label: string;
   )
 }
 
-function JobList({ title, jobs }: { title: string; jobs: Job[] }) {
-  if (jobs.length === 0) return null
+function AdminUserDetail({ summary, reportDate, onClose }: { summary: UserSummary; reportDate: string; onClose: () => void }) {
+  const collectionRate = summary.expectedToday > 0
+    ? Math.min(100, Math.round((summary.collectedToday / summary.expectedToday) * 100))
+    : 0
 
   return (
-    <div>
-      <h4>{title}</h4>
-      {jobs.map((job) => (
-        <div className="compact-job" key={job.id}>
-          <div>
-            <strong>{job.job_no}</strong>
-            <span>{job.cx_name}</span>
+    <section className="glass-card admin-user-detail">
+      <div className="section-header">
+        <div className="identity-cell">
+          <div className="avatar" style={{ background: avatarColor(summary.profile.username) }}>
+            {summary.profile.username.charAt(0).toUpperCase()}
           </div>
           <div>
-            <span>Rs. {formatMoney(job.remaining_amount)}</span>
-            <span>{getActionStatus(job)}</span>
+            <h2>{summary.profile.username} details</h2>
+            <p className="muted-text">{summary.profile.email || `${summary.profile.username}@three-sinha.com`} · {displayDate(reportDate)}</p>
           </div>
         </div>
-      ))}
+        <button className="btn-secondary icon-btn" onClick={onClose}>Close</button>
+      </div>
+
+      <div className="user-detail-grid">
+        <Metric label="All Jobs" value={String(summary.allJobs.length)} />
+        <Metric label="Open Jobs" value={String(summary.openJobs.length)} />
+        <Metric label="Follow-ups Due" value={String(summary.followUpsToday.length)} />
+        <Metric label="Collection Rate" value={`${collectionRate}%`} good={collectionRate >= 75} danger={collectionRate > 0 && collectionRate < 50} />
+        <Metric label="Positive" value={String(summary.positiveCount)} good />
+        <Metric label="Negative" value={String(summary.negativeCount)} danger />
+      </div>
+
+      <AdminJobTable title="Follow-ups due today" jobs={summary.followUpsToday} reportDate={reportDate} />
+      <AdminJobTable title="New jobs today" jobs={summary.todayJobs} reportDate={reportDate} />
+      <AdminJobTable title="Carry-forward jobs" jobs={summary.carryForwardJobs} reportDate={reportDate} />
+      <AdminJobTable title="All jobs for this user" jobs={summary.allJobs} reportDate={reportDate} />
+    </section>
+  )
+}
+
+function AdminJobTable({ title, jobs, reportDate }: { title: string; jobs: Job[]; reportDate: string }) {
+  return (
+    <div className="detail-table-block">
+      <div className="table-header compact-header">
+        <h3>{title}</h3>
+        <span className="badge badge-none">{jobs.length}</span>
+      </div>
+      {jobs.length === 0 ? (
+        <div className="empty-state compact-empty">No jobs in this section.</div>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table detail-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Job No</th>
+                <th>Cx Name</th>
+                <th>Contact</th>
+                <th>Amount</th>
+                <th>Received</th>
+                <th>Balance</th>
+                <th>Follow-up</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((job) => (
+                <tr key={job.id}>
+                  <td>{displayDate(job.date)}</td>
+                  <td className="link-text">{job.job_no}</td>
+                  <td>{job.cx_name}</td>
+                  <td>{job.contact_no}</td>
+                  <td className="amount">Rs. {formatMoney(job.job_amount)}</td>
+                  <td className="amount success-text">Rs. {formatMoney(job.amount_received)}</td>
+                  <td className={`amount ${job.remaining_amount > 0 ? 'danger-text' : 'success-text'}`}>Rs. {formatMoney(job.remaining_amount)}</td>
+                  <td>{displayDate(job.second_follow_up || job.first_follow_up)}</td>
+                  <td><span className={`badge ${statusBadgeClass(job.status)}`}>{job.status}</span></td>
+                  <td><span className={`badge ${getActionStatus(job, reportDate) === 'OVERDUE' ? 'badge-overdue' : 'badge-none'}`}>{getActionStatus(job, reportDate)}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

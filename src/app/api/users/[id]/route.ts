@@ -20,6 +20,10 @@ type UpdateUserBody = {
   password?: unknown
 }
 
+function isMissingEmailColumn(message: string) {
+  return message.includes("'email' column") || message.includes('column "email"')
+}
+
 export async function PATCH(req: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params
@@ -65,7 +69,18 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       .eq('id', id)
 
     if (profileError) {
-      return securityError(profileError.message, 500)
+      if (!isMissingEmailColumn(profileError.message)) {
+        return securityError(profileError.message, 500)
+      }
+
+      const { error: fallbackProfileError } = await admin.supabaseAdmin
+        .from('profiles')
+        .update({ username: cleanUsername })
+        .eq('id', id)
+
+      if (fallbackProfileError) {
+        return securityError(fallbackProfileError.message, 500)
+      }
     }
 
     return secureJson({ success: true })

@@ -34,6 +34,14 @@ type JobForm = {
   action_require: string
 }
 
+type FollowUpForm = {
+  amount_received: string
+  received_date: string
+  status: JobStatus
+  action_require: string
+  next_follow_up: string
+}
+
 const emptyForm: JobForm = {
   date: todayISO(),
   job_no: '',
@@ -101,7 +109,7 @@ export default function DashboardPage() {
   const [editRequests, setEditRequests] = useState<EditRequest[]>([])
   const [notifications, setNotifications] = useState<UserNotification[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'today' | 'all' | 'notifications'>('today')
+  const [activeTab, setActiveTab] = useState<'today' | 'followups' | 'all' | 'notifications'>('today')
   const [filterDate, setFilterDate] = useState(todayISO())
   const [showModal, setShowModal] = useState(false)
   const [editJob, setEditJob] = useState<Job | null>(null)
@@ -112,6 +120,17 @@ export default function DashboardPage() {
   const [requestSaving, setRequestSaving] = useState(false)
   const [requestFeedback, setRequestFeedback] = useState('')
   const [requestSuccess, setRequestSuccess] = useState('')
+  const [followUpJob, setFollowUpJob] = useState<Job | null>(null)
+  const [followUpForm, setFollowUpForm] = useState<FollowUpForm>({
+    amount_received: '',
+    received_date: todayISO(),
+    status: 'Pending',
+    action_require: 'FOLLOW UP',
+    next_follow_up: '',
+  })
+  const [followUpSaving, setFollowUpSaving] = useState(false)
+  const [followUpError, setFollowUpError] = useState('')
+  const [followUpSuccess, setFollowUpSuccess] = useState('')
   const [form, setForm] = useState<JobForm>(emptyForm)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
@@ -238,6 +257,7 @@ export default function DashboardPage() {
 
   const allDisplayJobs = useMemo(() => {
     if (activeTab === 'all') return jobs
+    if (activeTab === 'followups') return summary?.followUpsToday || []
     return summary ? [...summary.todayJobs, ...summary.carryForwardJobs] : []
   }, [activeTab, jobs, summary])
 
@@ -290,6 +310,19 @@ export default function DashboardPage() {
     setRequestNote('')
     setRequestFeedback('')
     setRequestSuccess('')
+  }
+
+  const openFollowUpModal = (job: Job) => {
+    setFollowUpJob(job)
+    setFollowUpForm({
+      amount_received: String(job.amount_received || ''),
+      received_date: filterDate,
+      status: job.status,
+      action_require: job.action_require?.startsWith('EDIT_REQUEST:') ? 'FOLLOW UP' : job.action_require || 'FOLLOW UP',
+      next_follow_up: addDaysISO(filterDate, 7),
+    })
+    setFollowUpError('')
+    setFollowUpSuccess('')
   }
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -393,6 +426,50 @@ export default function DashboardPage() {
     await loadRequests()
   }
 
+  const handleFollowUpSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!followUpJob) return
+
+    setFollowUpSaving(true)
+    setFollowUpError('')
+    setFollowUpSuccess('')
+
+    const amountReceived = Number(followUpForm.amount_received || 0)
+    if (amountReceived > followUpJob.job_amount) {
+      setFollowUpError('Amount received cannot be greater than job amount.')
+      setFollowUpSaving(false)
+      return
+    }
+
+    const shouldSetNextFollowUp = followUpForm.status === 'Pending' && amountReceived < followUpJob.job_amount
+    const payload = {
+      amount_received: amountReceived,
+      received_date: followUpForm.received_date || filterDate,
+      status: followUpForm.status,
+      action_require: followUpForm.action_require,
+      second_follow_up: shouldSetNextFollowUp
+        ? followUpForm.next_follow_up || addDaysISO(filterDate, 7)
+        : followUpJob.second_follow_up,
+    }
+
+    const { error } = await supabase
+      .from('jobs')
+      .update(payload)
+      .eq('id', followUpJob.id)
+      .eq('user_id', followUpJob.user_id)
+
+    if (error) {
+      setFollowUpError(error.message)
+      setFollowUpSaving(false)
+      return
+    }
+
+    setFollowUpSaving(false)
+    setFollowUpJob(null)
+    setFollowUpSuccess(`Follow-up updated for job ${followUpJob.job_no}.`)
+    await loadJobs()
+  }
+
   const markNotificationRead = async (notification: UserNotification) => {
     if (notification.read_at) return
 
@@ -466,6 +543,10 @@ export default function DashboardPage() {
           <button className={`sidebar-nav-item ${activeTab === 'today' ? 'active' : ''}`} onClick={() => setActiveTab('today')}>
             Today & Carry Forward
           </button>
+          <button className={`sidebar-nav-item ${activeTab === 'followups' ? 'active' : ''}`} onClick={() => setActiveTab('followups')}>
+            <span>Follow-ups Today</span>
+            {summary.followUpsToday.length > 0 && <span className="nav-count">{summary.followUpsToday.length}</span>}
+          </button>
           <button className={`sidebar-nav-item ${activeTab === 'all' ? 'active' : ''}`} onClick={() => setActiveTab('all')}>
             All Jobs
           </button>
@@ -483,7 +564,7 @@ export default function DashboardPage() {
       <main className="main-content">
         <header className="topbar">
           <div>
-            <h1>{activeTab === 'today' ? 'Daily Dashboard' : 'All Jobs'}</h1>
+            <h1>{activeTab === 'today' ? 'Daily Dashboard' : activeTab === 'followups' ? 'Follow-ups Today' : activeTab === 'notifications' ? 'Notifications' : 'All Jobs'}</h1>
             <p>{longDisplayDate(filterDate)}</p>
           </div>
           <div className="toolbar-row">
@@ -496,7 +577,7 @@ export default function DashboardPage() {
               <span>Compact view</span>
             </label>
             {pendingRequestCount > 0 && <span className="badge badge-pending">{pendingRequestCount} edit pending</span>}
-            {activeTab === 'today' && (
+            {(activeTab === 'today' || activeTab === 'followups') && (
               <input className="form-input compact-input" type="date" value={filterDate} onChange={(event) => setFilterDate(event.target.value)} />
             )}
             <button className="btn-primary" onClick={openAddModal}>Add Job</button>
@@ -505,6 +586,7 @@ export default function DashboardPage() {
 
         <div className="page-content">
           {requestSuccess && <div className="alert success">{requestSuccess}</div>}
+          {followUpSuccess && <div className="alert success">{followUpSuccess}</div>}
 
           {activeTab === 'today' && (
             <>
@@ -535,6 +617,17 @@ export default function DashboardPage() {
               reportDate={filterDate}
               onEdit={openEditRequestModal}
               editRequests={editRequests}
+            />
+          )}
+
+          {activeTab === 'followups' && (
+            <FollowUpSection
+              date={filterDate}
+              jobs={summary.followUpsToday}
+              reportDate={filterDate}
+              editRequests={editRequests}
+              onEdit={openEditRequestModal}
+              onUpdate={openFollowUpModal}
             />
           )}
 
@@ -577,6 +670,18 @@ export default function DashboardPage() {
           saving={requestSaving}
           onClose={() => setRequestJob(null)}
           onSubmit={handleEditRequestSubmit}
+        />
+      )}
+
+      {followUpJob && (
+        <FollowUpModal
+          job={followUpJob}
+          form={followUpForm}
+          setForm={setFollowUpForm}
+          error={followUpError}
+          saving={followUpSaving}
+          onClose={() => setFollowUpJob(null)}
+          onSubmit={handleFollowUpSubmit}
         />
       )}
 
@@ -682,6 +787,107 @@ function JobTable({
   )
 }
 
+function Metric({ label, value, good = false, danger = false }: { label: string; value: string; good?: boolean; danger?: boolean }) {
+  return (
+    <div className="metric-tile">
+      <span>{label}</span>
+      <strong className={`${good ? 'success-text' : ''} ${danger ? 'danger-text' : ''}`}>{value}</strong>
+    </div>
+  )
+}
+
+function FollowUpSection({
+  date,
+  jobs,
+  reportDate,
+  onEdit,
+  onUpdate,
+  editRequests,
+}: {
+  date: string
+  jobs: Job[]
+  reportDate: string
+  onEdit: (job: Job) => void
+  onUpdate: (job: Job) => void
+  editRequests: EditRequest[]
+}) {
+  return (
+    <section>
+      <div className="followup-hero glass-card">
+        <div>
+          <p className="muted-text">Due on {displayDate(date)}</p>
+          <h2>{jobs.length} follow-up{jobs.length === 1 ? '' : 's'} to handle today</h2>
+        </div>
+        <div className="followup-hero-stats">
+          <Metric label="Open Balance" value={`Rs. ${formatMoney(jobs.reduce((sum, job) => sum + job.remaining_amount, 0))}`} danger />
+          <Metric label="Pending Jobs" value={String(jobs.filter((job) => job.status === 'Pending').length)} />
+        </div>
+      </div>
+
+      <div className="glass-card table-card">
+        <div className="table-header">
+          <h2>Follow-up jobs for {displayDate(date)}</h2>
+          <span className="badge badge-none">{jobs.length}</span>
+        </div>
+
+        {jobs.length === 0 ? (
+          <div className="empty-state">No follow-ups are due on this date.</div>
+        ) : (
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Job No</th>
+                  <th>Cx Name</th>
+                  <th>Contact</th>
+                  <th>Job Amount</th>
+                  <th>Received</th>
+                  <th>Balance</th>
+                  <th>Due Step</th>
+                  <th>Status</th>
+                  <th>Action Required</th>
+                  <th>Update</th>
+                  <th>Edit Request</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((job) => {
+                  const action = getActionStatus(job, reportDate)
+                  const dueStep = job.first_follow_up === date ? '1st follow-up' : job.second_follow_up === date ? '2nd follow-up' : 'Follow-up'
+                  const approvedRequest = editRequests.find((request) => request.job_id === job.id && request.status === 'approved')
+                  const pendingRequest = editRequests.find((request) => request.job_id === job.id && request.status === 'pending')
+
+                  return (
+                    <tr key={job.id}>
+                      <td className="link-text">{job.job_no}</td>
+                      <td>{job.cx_name}</td>
+                      <td>{job.contact_no}</td>
+                      <td className="amount">Rs. {formatMoney(job.job_amount)}</td>
+                      <td className="amount success-text">Rs. {formatMoney(job.amount_received)}</td>
+                      <td className={`amount ${job.remaining_amount > 0 ? 'danger-text' : 'success-text'}`}>Rs. {formatMoney(job.remaining_amount)}</td>
+                      <td>{dueStep}</td>
+                      <td><span className={`badge badge-${job.status.toLowerCase()}`}>{job.status}</span></td>
+                      <td><span className={`badge ${action === 'OVERDUE' ? 'badge-overdue' : 'badge-none'}`}>{action}</span></td>
+                      <td>
+                        <button className="btn-primary icon-btn" onClick={() => onUpdate(job)}>Update</button>
+                      </td>
+                      <td>
+                        <button className="btn-secondary icon-btn" onClick={() => onEdit(job)} disabled={Boolean(pendingRequest && !approvedRequest)}>
+                          {approvedRequest ? 'Edit' : pendingRequest ? 'Pending' : 'Request'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 function JobModal({
   editJob,
   form,
@@ -765,6 +971,103 @@ function JobModal({
           <div className="button-row end">
             <button className="btn-secondary" type="button" onClick={onClose}>Cancel</button>
             <button className="btn-primary" disabled={saving}>{saving ? 'Saving...' : editJob ? 'Update Job' : 'Add Job'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function FollowUpModal({
+  job,
+  form,
+  setForm,
+  error,
+  saving,
+  onClose,
+  onSubmit,
+}: {
+  job: Job
+  form: FollowUpForm
+  setForm: (form: FollowUpForm) => void
+  error: string
+  saving: boolean
+  onClose: () => void
+  onSubmit: (event: React.FormEvent) => void
+}) {
+  const remaining = Math.max(0, job.job_amount - Number(form.amount_received || 0))
+  const stillPending = form.status === 'Pending' && remaining > 0
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box small-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="section-header">
+          <h2>Update Follow-up</h2>
+          <button className="btn-secondary icon-btn" onClick={onClose}>Close</button>
+        </div>
+
+        <div className="request-summary">
+          <strong>{job.job_no}</strong>
+          <span>{job.cx_name} · {job.contact_no}</span>
+        </div>
+
+        {error && <div className="alert error">{error}</div>}
+
+        <form onSubmit={onSubmit}>
+          <Field label="Total amount received so far">
+            <input
+              className="form-input"
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.amount_received}
+              onChange={(event) => setForm({ ...form, amount_received: event.target.value })}
+            />
+          </Field>
+          <Field label="Received date">
+            <input
+              className="form-input"
+              type="date"
+              value={form.received_date}
+              onChange={(event) => setForm({ ...form, received_date: event.target.value })}
+            />
+          </Field>
+          <Field label="Status after follow-up">
+            <select className="form-input" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value as JobStatus })}>
+              <option value="Pending">Pending</option>
+              <option value="Positive">Positive</option>
+              <option value="Negative">Negative</option>
+            </select>
+          </Field>
+          <Field label="Action required">
+            <select className="form-input" value={form.action_require} onChange={(event) => setForm({ ...form, action_require: event.target.value })}>
+              <option value="NONE">NONE</option>
+              <option value="CALL">CALL</option>
+              <option value="VISIT">VISIT</option>
+              <option value="EMAIL">EMAIL</option>
+              <option value="FOLLOW UP">FOLLOW UP</option>
+              <option value="OVERDUE">OVERDUE</option>
+            </select>
+          </Field>
+          {stillPending && (
+            <Field label="Next follow-up date">
+              <input
+                className="form-input"
+                type="date"
+                value={form.next_follow_up}
+                onChange={(event) => setForm({ ...form, next_follow_up: event.target.value })}
+              />
+            </Field>
+          )}
+
+          <div className="live-total">
+            <span>Balance after update</span>
+            <strong>Rs. {formatMoney(remaining)}</strong>
+          </div>
+
+          <div className="button-row end">
+            <button className="btn-secondary" type="button" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" disabled={saving}>{saving ? 'Updating...' : 'Save Follow-up'}</button>
           </div>
         </form>
       </div>

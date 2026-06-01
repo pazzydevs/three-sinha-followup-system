@@ -136,7 +136,27 @@ export function requireSameOrigin(req: NextRequest) {
   const origin = req.headers.get('origin')
   const host = req.headers.get('host')
 
-  if (!origin || !host) {
+  if (!host) {
+    return securityError('Missing host header.', 403)
+  }
+
+  if (!origin) {
+    const referer = req.headers.get('referer')
+    const fetchSite = req.headers.get('sec-fetch-site')
+
+    if (fetchSite === 'same-origin' || fetchSite === 'none') {
+      return null
+    }
+
+    if (referer) {
+      try {
+        const refererUrl = new URL(referer)
+        if (refererUrl.host === host) return null
+      } catch {
+        return securityError('Invalid referer header.', 403)
+      }
+    }
+
     return securityError('Missing origin header.', 403)
   }
 

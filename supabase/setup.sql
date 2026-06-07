@@ -81,6 +81,32 @@ create table if not exists public.user_notifications (
 
 create index if not exists user_notifications_user_read_idx on public.user_notifications (user_id, read_at, created_at desc);
 
+create table if not exists public.call_events (
+  id uuid primary key default gen_random_uuid(),
+  client_event_id text unique not null,
+  device_id text not null,
+  agent_name text,
+  source text not null default 'other' check (source in ('cellular', 'whatsapp', 'whatsapp_business', 'other')),
+  direction text not null default 'unknown' check (direction in ('incoming', 'outgoing', 'missed', 'unknown')),
+  status text not null default 'captured' check (status in ('ringing', 'active', 'ended', 'missed', 'declined', 'captured', 'unknown')),
+  contact_name text,
+  phone_number text,
+  app_package text,
+  started_at timestamptz,
+  ended_at timestamptz,
+  duration_seconds integer check (duration_seconds is null or duration_seconds >= 0),
+  captured_at timestamptz not null default timezone('utc'::text, now()),
+  notification_title text,
+  notification_text text,
+  notes text,
+  raw_payload jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default timezone('utc'::text, now())
+);
+
+create index if not exists call_events_captured_idx on public.call_events (captured_at desc);
+create index if not exists call_events_device_idx on public.call_events (device_id, captured_at desc);
+create index if not exists call_events_source_idx on public.call_events (source, captured_at desc);
+
 create table if not exists public.app_settings (
   key text primary key,
   value jsonb not null default '{}'::jsonb,
@@ -129,12 +155,12 @@ begin
     new.id,
     user_name,
     new.email,
-    case when user_name = 'admin' then 'admin' else 'user' end
+    case when user_name = 'pasindu' then 'admin' else 'user' end
   )
   on conflict (id) do update
     set username = excluded.username,
         email = new.email,
-        role = case when excluded.username = 'admin' then 'admin' else public.profiles.role end;
+        role = case when excluded.username = 'pasindu' then 'admin' else public.profiles.role end;
 
   return new;
 end;
@@ -239,6 +265,7 @@ alter table public.jobs enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.edit_requests enable row level security;
 alter table public.user_notifications enable row level security;
+alter table public.call_events enable row level security;
 
 drop policy if exists "Users can view own profile" on public.profiles;
 drop policy if exists "Admin can view all profiles" on public.profiles;
@@ -351,6 +378,17 @@ create policy "Notifications delete admin"
   on public.user_notifications for delete
   using (public.is_admin(auth.uid()));
 
+drop policy if exists "Call events admin select" on public.call_events;
+drop policy if exists "Call events admin delete" on public.call_events;
+
+create policy "Call events admin select"
+  on public.call_events for select
+  using (public.is_admin(auth.uid()));
+
+create policy "Call events admin delete"
+  on public.call_events for delete
+  using (public.is_admin(auth.uid()));
+
 drop policy if exists "App settings admin select" on public.app_settings;
 drop policy if exists "App settings admin insert" on public.app_settings;
 drop policy if exists "App settings admin update" on public.app_settings;
@@ -398,6 +436,12 @@ begin
   exception
     when duplicate_object then null;
   end;
+
+  begin
+    alter publication supabase_realtime add table public.call_events;
+  exception
+    when duplicate_object then null;
+  end;
 end;
 $$;
 
@@ -405,6 +449,6 @@ notify pgrst, 'reload schema';
 
 -- Existing auth users can be repaired after running this setup:
 -- insert into public.profiles (id, username, role)
--- select id, split_part(email, '@', 1), case when split_part(email, '@', 1) = 'admin' then 'admin' else 'user' end
+-- select id, split_part(email, '@', 1), case when split_part(email, '@', 1) = 'pasindu' then 'admin' else 'user' end
 -- from auth.users
 -- on conflict (id) do update set username = excluded.username, role = excluded.role;

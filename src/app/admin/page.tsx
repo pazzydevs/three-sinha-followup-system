@@ -27,7 +27,29 @@ type N8nConfig = {
   enabled: boolean
 }
 
-type AdminTab = 'overview' | 'users' | 'inquiries' | 'report' | 'n8n'
+type CallEvent = {
+  id: string
+  client_event_id: string
+  device_id: string
+  agent_name: string | null
+  source: 'cellular' | 'whatsapp' | 'whatsapp_business' | 'other'
+  direction: 'incoming' | 'outgoing' | 'missed' | 'unknown'
+  status: 'ringing' | 'active' | 'ended' | 'missed' | 'declined' | 'captured' | 'unknown'
+  contact_name: string | null
+  phone_number: string | null
+  app_package: string | null
+  started_at: string | null
+  ended_at: string | null
+  duration_seconds: number | null
+  captured_at: string
+  notification_title: string | null
+  notification_text: string | null
+  notes: string | null
+  raw_payload: unknown
+  created_at: string
+}
+
+type AdminTab = 'overview' | 'users' | 'inquiries' | 'calls' | 'report' | 'n8n'
 
 const defaultN8nConfig: N8nConfig = {
   webhookUrl: process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL || '',
@@ -50,6 +72,7 @@ function getAdminTitle(tab: AdminTab) {
   if (tab === 'overview') return 'Company Overview'
   if (tab === 'users') return 'Manage Users'
   if (tab === 'inquiries') return 'User Inquiries'
+  if (tab === 'calls') return 'Call Tracker'
   if (tab === 'n8n') return 'n8n Configuration'
   return 'Daily Report'
 }
@@ -85,6 +108,34 @@ function statusBadgeClass(status: string) {
   return 'badge-none'
 }
 
+function callBadgeClass(value: string) {
+  const normalized = value.toLowerCase()
+  if (normalized === 'incoming' || normalized === 'active' || normalized === 'ended') return 'badge-positive'
+  if (normalized === 'outgoing' || normalized === 'captured') return 'badge-none'
+  if (normalized === 'missed' || normalized === 'declined') return 'badge-negative'
+  return 'badge-pending'
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return '-'
+
+  try {
+    return new Intl.DateTimeFormat('en-LK', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(value))
+  } catch {
+    return value
+  }
+}
+
+function formatDuration(seconds: number | null) {
+  if (seconds === null || seconds === undefined) return '-'
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return minutes > 0 ? `${minutes}m ${String(remainder).padStart(2, '0')}s` : `${remainder}s`
+}
+
 function playNotificationSound() {
   try {
     const audioWindow = window as typeof window & { webkitAudioContext?: typeof AudioContext }
@@ -117,6 +168,8 @@ export default function AdminPage() {
   const [users, setUsers] = useState<Profile[]>([])
   const [allJobs, setAllJobs] = useState<Job[]>([])
   const [editRequests, setEditRequests] = useState<EditRequest[]>([])
+  const [callEvents, setCallEvents] = useState<CallEvent[]>([])
+  const [callEventMessage, setCallEventMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<AdminTab>('overview')
   const [reportDate, setReportDate] = useState(todayISO())
@@ -202,6 +255,25 @@ export default function AdminPage() {
     setInquiriesLoaded(true)
   }, [adminProfile])
 
+  const loadCallEvents = useCallback(async () => {
+    if (!adminProfile) return
+
+    const { data: session } = await supabase.auth.getSession()
+    const response = await fetch('/api/call-events?limit=200', {
+      headers: { Authorization: `Bearer ${session.session?.access_token || ''}` },
+    })
+    const data = await response.json().catch(() => null)
+
+    if (!response.ok) {
+      setCallEventMessage(data?.error || 'Call events could not be loaded. Run the latest Supabase setup SQL.')
+      setCallEvents([])
+      return
+    }
+
+    setCallEventMessage('')
+    setCallEvents((data?.events || []) as CallEvent[])
+  }, [adminProfile])
+
   const loadN8nConfig = useCallback(async () => {
     const storedConfig = window.localStorage.getItem(n8nStorageKey)
     if (storedConfig) {
@@ -230,6 +302,7 @@ export default function AdminPage() {
     queueMicrotask(() => {
       void loadData()
       void loadEditRequests()
+      void loadCallEvents()
       void loadN8nConfig()
     })
 
@@ -237,6 +310,9 @@ export default function AdminPage() {
       .channel('admin-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'call_events' }, () => {
+        void loadCallEvents()
+      })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_settings', filter: 'key=eq.edit_workflow_state' }, () => {
         if (inquiriesLoaded) {
           playNotificationSound()
@@ -247,13 +323,14 @@ export default function AdminPage() {
 
     const interval = window.setInterval(() => {
       void loadEditRequests()
+      void loadCallEvents()
     }, 15_000)
 
     return () => {
       window.clearInterval(interval)
       supabase.removeChannel(channel)
     }
-  }, [adminProfile, inquiriesLoaded, loadData, loadEditRequests, loadN8nConfig])
+  }, [adminProfile, inquiriesLoaded, loadCallEvents, loadData, loadEditRequests, loadN8nConfig])
 
   const summaries = useMemo(() => buildUserSummaries(users, allJobs, reportDate), [users, allJobs, reportDate])
   const selectedSummary = summaries.find((summary) => summary.profile.id === selectedUserId) || null
@@ -268,6 +345,24 @@ export default function AdminPage() {
     overdue: summaries.reduce((sum, user) => sum + user.overdueCount, 0),
   }), [summaries])
   const pendingInquiryCount = editRequests.filter((request) => request.status === 'pending').length
+  const todayCallEvents = useMemo(() => {
+    const today = todayISO()
+    return callEvents.filter((event) => event.captured_at.slice(0, 10) === today)
+  }, [callEvents])
+  const callTrackerStats = useMemo(() => {
+    const deviceIds = new Set(callEvents.map((event) => event.device_id).filter(Boolean))
+    const whatsappToday = todayCallEvents.filter((event) => event.source === 'whatsapp' || event.source === 'whatsapp_business').length
+    const cellularToday = todayCallEvents.filter((event) => event.source === 'cellular').length
+    const lastEvent = callEvents[0] || null
+
+    return {
+      totalToday: todayCallEvents.length,
+      whatsappToday,
+      cellularToday,
+      devices: deviceIds.size,
+      lastCapturedAt: lastEvent?.captured_at || null,
+    }
+  }, [callEvents, todayCallEvents])
 
   const handlePreviewReport = () => {
     setReportPreview(buildReportPayload(summaries, reportDate).reportText)
@@ -588,6 +683,7 @@ export default function AdminPage() {
             { key: 'overview', label: 'Overview' },
             { key: 'users', label: 'Manage Users' },
             { key: 'inquiries', label: 'User Inquiries' },
+            { key: 'calls', label: 'Call Tracker' },
             { key: 'report', label: 'Daily Report' },
             { key: 'n8n', label: 'n8n Configuration' },
           ].map((item) => (
@@ -598,6 +694,7 @@ export default function AdminPage() {
             >
               <span>{item.label}</span>
               {item.key === 'inquiries' && pendingInquiryCount > 0 && <span className="nav-count">{pendingInquiryCount}</span>}
+              {item.key === 'calls' && todayCallEvents.length > 0 && <span className="nav-count">{todayCallEvents.length}</span>}
             </button>
           ))}
         </nav>
@@ -825,6 +922,96 @@ export default function AdminPage() {
                   })}
                 </div>
               )}
+            </section>
+          )}
+
+          {activeTab === 'calls' && (
+            <section className="narrow-panel wide call-tracker-panel">
+              <div className="grid-4">
+                <div className="stat-card emerald">
+                  <p>Events Today</p>
+                  <strong>{callTrackerStats.totalToday}</strong>
+                </div>
+                <div className="stat-card blue">
+                  <p>WhatsApp Captures</p>
+                  <strong>{callTrackerStats.whatsappToday}</strong>
+                </div>
+                <div className="stat-card amber">
+                  <p>Cellular Calls</p>
+                  <strong>{callTrackerStats.cellularToday}</strong>
+                </div>
+                <div className="stat-card purple">
+                  <p>Active Devices</p>
+                  <strong>{callTrackerStats.devices}</strong>
+                </div>
+              </div>
+
+              <div className="glass-card call-ingest-card">
+                <div>
+                  <h2>Mobile app connection</h2>
+                  <p className="muted-text">Set the Android app CRM base URL to this system and post call events to the ingest endpoint with the device token.</p>
+                </div>
+                <div className="call-ingest-grid">
+                  <Metric label="Ingest Endpoint" value={typeof window === 'undefined' ? '/api/call-events' : `${window.location.origin}/api/call-events`} />
+                  <Metric label="Auth Header" value="Authorization: Bearer CALL_TRACKER_INGEST_TOKEN" />
+                  <Metric label="Last Capture" value={formatDateTime(callTrackerStats.lastCapturedAt)} />
+                </div>
+              </div>
+
+              {callEventMessage && <div className="alert error">{callEventMessage}</div>}
+
+              <div className="glass-card table-card">
+                <div className="table-header">
+                  <h2>Recent call feed</h2>
+                  <button className="btn-secondary" onClick={loadCallEvents}>Refresh</button>
+                </div>
+                {callEvents.length === 0 ? (
+                  <div className="empty-state">No call events received yet.</div>
+                ) : (
+                  <div className="table-scroll">
+                    <table className="data-table call-events-table">
+                      <thead>
+                        <tr>
+                          <th>Captured</th>
+                          <th>Source</th>
+                          <th>Direction</th>
+                          <th>Status</th>
+                          <th>Contact</th>
+                          <th>Number</th>
+                          <th>Duration</th>
+                          <th>Agent / Device</th>
+                          <th>Notification</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {callEvents.map((event) => (
+                          <tr key={event.id}>
+                            <td>{formatDateTime(event.captured_at)}</td>
+                            <td><span className={`badge ${event.source.includes('whatsapp') ? 'badge-positive' : 'badge-none'}`}>{event.source.replace('_', ' ')}</span></td>
+                            <td><span className={`badge ${callBadgeClass(event.direction)}`}>{event.direction}</span></td>
+                            <td><span className={`badge ${callBadgeClass(event.status)}`}>{event.status}</span></td>
+                            <td>{event.contact_name || '-'}</td>
+                            <td>{event.phone_number || '-'}</td>
+                            <td>{formatDuration(event.duration_seconds)}</td>
+                            <td>
+                              <div className="call-device-cell">
+                                <strong>{event.agent_name || 'Unassigned'}</strong>
+                                <span>{event.device_id}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <div className="call-notification-cell">
+                                <strong>{event.notification_title || event.app_package || '-'}</strong>
+                                <span>{event.notification_text || event.notes || '-'}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </section>
           )}
 

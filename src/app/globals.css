@@ -1333,6 +1333,64 @@ button.user-summary-card {
   font-size: 0.85rem;
 }
 
+.call-tracker-panel {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.call-ingest-card {
+  padding: 1.25rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.call-ingest-card h2 {
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 800;
+  margin-bottom: 0.25rem;
+}
+
+.call-ingest-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1.15fr 0.8fr;
+  gap: 0.75rem;
+}
+
+.call-ingest-grid .metric-tile strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-events-table {
+  min-width: 1180px;
+}
+
+.call-device-cell,
+.call-notification-cell {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.call-device-cell strong,
+.call-notification-cell strong {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-device-cell span,
+.call-notification-cell span {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 @media (max-width: 900px) {
   .sidebar {
     position: static;
@@ -1385,6 +1443,10 @@ button.user-summary-card {
   }
 
   .n8n-config-notes {
+    grid-template-columns: 1fr;
+  }
+
+  .call-ingest-grid {
     grid-template-columns: 1fr;
   }
 }

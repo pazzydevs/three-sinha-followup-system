@@ -5,7 +5,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://dkxcvbfsmjf
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 const seedUsers = [
-  { username: 'admin', password: 'admin890', role: 'admin' },
+  { username: 'pasindu', password: 'admin890', role: 'admin', previousUsername: 'admin' },
   { username: 'user1', password: 'user1', role: 'user' },
 ]
 
@@ -18,17 +18,21 @@ const supabase = createClient(supabaseUrl, serviceKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 })
 
-async function upsertUser({ username, password, role }) {
+async function upsertUser({ username, password, role, previousUsername }) {
   const email = `${username}@three-sinha.com`
+  const previousEmail = previousUsername ? `${previousUsername}@three-sinha.com` : null
   const { data: existingUsers, error: listError } = await supabase.auth.admin.listUsers()
 
   if (listError) throw listError
 
-  const existing = existingUsers.users.find((user) => user.email === email)
+  const existing =
+    existingUsers.users.find((user) => user.email === email) ||
+    (previousEmail ? existingUsers.users.find((user) => user.email === previousEmail) : null)
   let userId = existing?.id
 
   if (existing) {
     const { error } = await supabase.auth.admin.updateUserById(existing.id, {
+      email,
       password,
       email_confirm: true,
       user_metadata: { username },
@@ -47,9 +51,17 @@ async function upsertUser({ username, password, role }) {
     console.log(`Created auth user ${email}`)
   }
 
-  const { error: profileError } = await supabase
+  let { error: profileError } = await supabase
     .from('profiles')
-    .upsert({ id: userId, username, role }, { onConflict: 'id' })
+    .upsert({ id: userId, username, email, role }, { onConflict: 'id' })
+
+  if (profileError?.code === 'PGRST204') {
+    const fallback = await supabase
+      .from('profiles')
+      .upsert({ id: userId, username, role }, { onConflict: 'id' })
+
+    profileError = fallback.error
+  }
 
   if (profileError) throw profileError
   console.log(`Profile ready for ${username} (${role})`)

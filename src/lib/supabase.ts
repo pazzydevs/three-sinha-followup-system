@@ -149,6 +149,67 @@ export type Database = {
           read_at?: string | null
         }
       }
+      call_events: {
+        Row: {
+          id: string
+          client_event_id: string
+          device_id: string
+          agent_name: string | null
+          source: 'cellular' | 'whatsapp' | 'whatsapp_business' | 'other'
+          direction: 'incoming' | 'outgoing' | 'missed' | 'unknown'
+          status: 'ringing' | 'active' | 'ended' | 'missed' | 'declined' | 'captured' | 'unknown'
+          contact_name: string | null
+          phone_number: string | null
+          app_package: string | null
+          started_at: string | null
+          ended_at: string | null
+          duration_seconds: number | null
+          captured_at: string
+          notification_title: string | null
+          notification_text: string | null
+          notes: string | null
+          raw_payload: unknown
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          client_event_id: string
+          device_id: string
+          agent_name?: string | null
+          source?: 'cellular' | 'whatsapp' | 'whatsapp_business' | 'other'
+          direction?: 'incoming' | 'outgoing' | 'missed' | 'unknown'
+          status?: 'ringing' | 'active' | 'ended' | 'missed' | 'declined' | 'captured' | 'unknown'
+          contact_name?: string | null
+          phone_number?: string | null
+          app_package?: string | null
+          started_at?: string | null
+          ended_at?: string | null
+          duration_seconds?: number | null
+          captured_at?: string
+          notification_title?: string | null
+          notification_text?: string | null
+          notes?: string | null
+          raw_payload?: unknown
+          created_at?: string
+        }
+        Update: {
+          agent_name?: string | null
+          source?: 'cellular' | 'whatsapp' | 'whatsapp_business' | 'other'
+          direction?: 'incoming' | 'outgoing' | 'missed' | 'unknown'
+          status?: 'ringing' | 'active' | 'ended' | 'missed' | 'declined' | 'captured' | 'unknown'
+          contact_name?: string | null
+          phone_number?: string | null
+          app_package?: string | null
+          started_at?: string | null
+          ended_at?: string | null
+          duration_seconds?: number | null
+          captured_at?: string
+          notification_title?: string | null
+          notification_text?: string | null
+          notes?: string | null
+          raw_payload?: unknown
+        }
+      }
     }
   }
 }

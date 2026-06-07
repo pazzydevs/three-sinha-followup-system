@@ -21,9 +21,10 @@ N8N_WEBHOOK_URL=
 SUPABASE_SERVICE_ROLE_KEY=
 CRON_SECRET=
 ALLOWED_N8N_HOSTS=
+CALL_TRACKER_INGEST_TOKEN=
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is required for admin user creation and the scheduled server-side report route. `CRON_SECRET` should be set in Vercel so scheduled report calls include an authorization header. `ALLOWED_N8N_HOSTS` is optional and defaults to `n8n.pazzy.store`.
+`SUPABASE_SERVICE_ROLE_KEY` is required for admin user creation and the scheduled server-side report route. `CRON_SECRET` should be set in Vercel so scheduled report calls include an authorization header. `ALLOWED_N8N_HOSTS` is optional and defaults to `n8n.pazzy.store`. `CALL_TRACKER_INGEST_TOKEN` is the shared bearer token used by the Android call tracker app when posting to `/api/call-events`.
 
 ## Security Baseline
 
@@ -38,12 +39,47 @@ This codebase is maintained against an OWASP ASVS Level 2 oriented baseline:
 
 Every new feature should preserve these controls and keep user authorization decisions on the server or in Supabase RLS.
 
+## Call Tracker App Integration
+
+Configure the Android call tracker app to send JSON events to:
+
+```text
+POST https://your-system-domain.com/api/call-events
+Authorization: Bearer <CALL_TRACKER_INGEST_TOKEN>
+Content-Type: application/json
+```
+
+Example payload:
+
+```json
+{
+  "clientEventId": "device-001:whatsapp:2026-06-07T12:30:00Z",
+  "deviceId": "device-001",
+  "agentName": "Agent1",
+  "source": "whatsapp",
+  "direction": "incoming",
+  "status": "captured",
+  "contactName": "Customer Name",
+  "phoneNumber": "+94770000000",
+  "startedAt": "2026-06-07T12:30:00Z",
+  "durationSeconds": 120,
+  "capturedAt": "2026-06-07T12:32:00Z",
+  "notificationTitle": "WhatsApp",
+  "notificationText": "Incoming voice call"
+}
+```
+
+The admin panel shows these events under **Call Tracker**. If the existing Supabase project is already set up, run only [supabase/call-events-setup.sql](./supabase/call-events-setup.sql) in Supabase.
+
+The endpoint also accepts the current APK field names: `timestamp` in epoch milliseconds, `duration` in seconds, `source` as `PHONE` or `WHATSAPP`, and uppercase `status` values such as `INCOMING`, `ANSWERED`, `MISSED`, and `OUTGOING`.
+
 ## Supabase Setup
 
 Run [supabase/setup.sql](./supabase/setup.sql) in the Supabase SQL editor. It creates:
 
 - `profiles`
 - `jobs`
+- `call_events`
 - `app_settings`
 - non-recursive RLS policies
 - auth user profile trigger

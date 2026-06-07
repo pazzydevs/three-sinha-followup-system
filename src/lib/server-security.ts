@@ -57,6 +57,66 @@ type Database = {
         }
         Relationships: []
       }
+      call_events: {
+        Row: {
+          id: string
+          client_event_id: string
+          device_id: string
+          agent_name: string | null
+          source: string
+          direction: string
+          status: string
+          contact_name: string | null
+          phone_number: string | null
+          app_package: string | null
+          started_at: string | null
+          ended_at: string | null
+          duration_seconds: number | null
+          captured_at: string
+          notification_title: string | null
+          notification_text: string | null
+          notes: string | null
+          raw_payload: Json
+          created_at: string
+        }
+        Insert: {
+          client_event_id: string
+          device_id: string
+          agent_name?: string | null
+          source?: string
+          direction?: string
+          status?: string
+          contact_name?: string | null
+          phone_number?: string | null
+          app_package?: string | null
+          started_at?: string | null
+          ended_at?: string | null
+          duration_seconds?: number | null
+          captured_at?: string
+          notification_title?: string | null
+          notification_text?: string | null
+          notes?: string | null
+          raw_payload?: Json
+        }
+        Update: {
+          agent_name?: string | null
+          source?: string
+          direction?: string
+          status?: string
+          contact_name?: string | null
+          phone_number?: string | null
+          app_package?: string | null
+          started_at?: string | null
+          ended_at?: string | null
+          duration_seconds?: number | null
+          captured_at?: string
+          notification_title?: string | null
+          notification_text?: string | null
+          notes?: string | null
+          raw_payload?: Json
+        }
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: Record<string, never>

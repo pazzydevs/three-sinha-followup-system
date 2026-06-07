@@ -50,7 +50,7 @@ async function main() {
     console.log('OK tables are reachable through the REST API.')
   }
 
-  await checkLogin('admin', 'admin890')
+  await checkLogin('pasindu', 'admin890')
   await checkLogin('user1', 'user1')
 }
 

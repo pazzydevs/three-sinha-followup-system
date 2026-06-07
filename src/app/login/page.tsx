@@ -68,7 +68,7 @@ export default function LoginPage() {
               className="form-input"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              placeholder="admin or user1"
+              placeholder="pasindu or user1"
               autoComplete="username"
               required
             />
